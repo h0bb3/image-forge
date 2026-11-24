@@ -1,7 +1,7 @@
 // Image Forge: the page. The image work itself is in core.js.
 import {
   LABELS, alphaShare, borderColor, removeBackground, contentBounds, detectParts, layoutViews, zip,
-  floodMask, paintMask, unzip,
+  floodMask, paintMask, unzip, applyMatte,
 } from './core.js';
 
 const $ = id => document.getElementById(id);
@@ -15,6 +15,7 @@ const defaults = {
   tolerance: 18, soft: 14, defringe: true, choke: 0, holes: false, gap: 1.2,
   trim: true, padding: 6, square: true, same: true, size: 0, fill: 'transparent', fillColor: '#ffffff',
   brush: 30,
+  method: 'color',   // how the background is found: color | ai | both
   // Views taken from another view: {left: {from: 'right', mirror: true, turn: 0}}.
   derived: {},
 };
@@ -76,6 +77,7 @@ async function makeSheet(blob, name) {
     auto: true, color: borderColor(src, w, h),
     boxes: [], found: true,       // found: the boxes are as detected, nobody has touched them
     mask: null, undo: [],         // the work by hand: 1 erased, 2 kept (see core.js)
+    method: opt.method, matte: null, busy: false,   // the model's matte, once it has run
     view: null,
   };
   return sheet;
@@ -87,6 +89,7 @@ async function addImage(blob, name) {
   sheets.push(sheet);
   process(sheet);
   show(sheet);
+  wantMatte(sheet);
   if (!nameTyped) $('name').value = sheets[0].name;
 }
 
@@ -102,23 +105,23 @@ async function addFiles(files) {
 // ----------------------------------------------------------------- projects
 // A project is a zip: project.json, the pictures as they were opened, and
 // the work by hand on each as a PNG (its red is 100 times the mask).
-async function maskPng(sheet) {
+async function maskPng(sheet, bytes = sheet.mask, scale = 100) {
   const c = document.createElement('canvas');
   c.width = sheet.w; c.height = sheet.h;
   const image = new ImageData(sheet.w, sheet.h), d = image.data;
-  for (let i = 0; i < sheet.mask.length; i++) { d[i * 4] = sheet.mask[i] * 100; d[i * 4 + 3] = 255; }
+  for (let i = 0; i < bytes.length; i++) { d[i * 4] = bytes[i] * scale; d[i * 4 + 3] = 255; }
   c.getContext('2d').putImageData(image, 0, 0);
   return new Uint8Array(await (await toPng(c)).arrayBuffer());
 }
 
-async function readMask(bytes, w, h) {
+async function readMask(bytes, w, h, scale = 100) {
   const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }), { colorSpaceConversion: 'none' });
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
   const g = c.getContext('2d', { willReadFrequently: true });
   g.drawImage(bitmap, 0, 0);
   const d = g.getImageData(0, 0, w, h).data, mask = new Uint8Array(w * h);
-  for (let i = 0; i < mask.length; i++) mask[i] = Math.round(d[i * 4] / 100);
+  for (let i = 0; i < mask.length; i++) mask[i] = Math.round(d[i * 4] / scale);
   return mask;
 }
 
@@ -134,8 +137,14 @@ async function saveProject() {
       mask = `mask-${i + 1}.png`;
       files.push({ name: mask, data: await maskPng(s) });
     }
+    // The model's matte too, so that it need not run again.
+    let matte = null;
+    if (s.matte) {
+      matte = `matte-${i + 1}.png`;
+      files.push({ name: matte, data: await maskPng(s, s.matte, 1) });
+    }
     list.push({
-      name: s.name, file, type: s.blob.type, mask, on: s.on, auto: s.auto, color: s.color, found: s.found,
+      name: s.name, file, type: s.blob.type, mask, matte, method: s.method, on: s.on, auto: s.auto, color: s.color, found: s.found,
       boxes: s.boxes.map(({ x, y, w, h, label }) => ({ x, y, w, h, label })),
     });
   }
@@ -162,6 +171,9 @@ async function openProject(file) {
     sheet.boxes = (s.boxes || []).map(b => ({ id: nextId++, x: b.x, y: b.y, w: b.w, h: b.h, label: LABELS.includes(b.label) ? b.label : null }));
     const mask = s.mask && entries.find(e => e.name === s.mask);
     if (mask) sheet.mask = await readMask(mask.data, sheet.w, sheet.h);
+    const matte = s.matte && entries.find(e => e.name === s.matte);
+    if (matte) sheet.matte = await readMask(matte.data, sheet.w, sheet.h, 1);
+    sheet.method = ['color', 'ai', 'both'].includes(s.method) ? s.method : 'color';
     opened.push(sheet);
   }
   if (!opened.length) { toast(`${file.name} holds no pictures`); return; }
@@ -173,6 +185,7 @@ async function openProject(file) {
   sheets.length = 0; deriving = null; tool = 'select'; picking = false;
   sheets.push(...opened);
   for (const s of sheets) process(s, false);
+  for (const s of sheets) wantMatte(s);
   $('name').value = project.name || ''; nameTyped = true;
   show(sheets[project.current] || sheets[0]);
   toast(`Opened ${file.name}`);
@@ -193,15 +206,21 @@ function show(sheet) {
 
 // --------------------------------------------------------------- processing
 function process(sheet, redetect = sheet.found) {
-  sheet.out = sheet.on
-    ? removeBackground(sheet.src, sheet.w, sheet.h, {
-      color: sheet.color, tolerance: opt.tolerance, soft: opt.soft, holes: opt.holes, defringe: opt.defringe, choke: opt.choke,
-      mask: sheet.mask,
-    })
-    : sheet.mask
-      // No background to key out: only the work by hand counts.
-      ? removeBackground(sheet.src, sheet.w, sheet.h, { color: [0, 0, 0], tolerance: -1, mask: sheet.mask })
-      : sheet.src;
+  const { src, w, h, mask } = sheet;
+  // Only the work by hand: no background is keyed out by colour.
+  const byHand = () => (mask ? removeBackground(src, w, h, { color: [0, 0, 0], tolerance: -1, mask }) : src);
+  const byColor = choke => removeBackground(src, w, h, {
+    color: sheet.color, tolerance: opt.tolerance, soft: opt.soft, holes: opt.holes, defringe: opt.defringe, choke, mask,
+  });
+  if (!sheet.on) sheet.out = byHand();
+  else if (sheet.method === 'color' || !sheet.matte) sheet.out = byColor(opt.choke);   // also while the model is still at it
+  else if (sheet.method === 'both') sheet.out = applyMatte(byColor(0), w, h, sheet.matte, { mask, choke: opt.choke });
+  else {
+    const out = byHand();
+    sheet.out = applyMatte(out === src ? new Uint8ClampedArray(src) : out, w, h, sheet.matte, {
+      mask, color: opt.defringe ? sheet.color : null, choke: opt.choke,
+    });
+  }
   sheet.canvas.getContext('2d').putImageData(new ImageData(sheet.out, sheet.w, sheet.h), 0, 0);
   if (redetect) detect(sheet);
 }
@@ -212,6 +231,47 @@ function detect(sheet) {
     .map(b => ({ id: nextId++, ...b, label: null }));
   sheet.found = true;
   if (sheet === current) selected = sheet.boxes[was] || sheet.boxes[0] || null;
+}
+
+// ------------------------------------------------------------- the AI model
+// It runs in a worker (ai-worker.js), which is only started, and the model
+// only downloaded, when a picture first asks for it.
+let aiWorker = null, aiNote = '';
+const aiWaiting = new Map();
+
+function wantMatte(sheet) {
+  if (!sheet.on || sheet.method === 'color' || sheet.matte || sheet.busy) return;
+  if (!aiWorker) {
+    aiWorker = new Worker('ai-worker.js', { type: 'module' });
+    aiWorker.onmessage = e => {
+      const m = e.data;
+      if (m.type === 'progress') { aiNote = m.text; $('aiNote').textContent = aiNote; return; }
+      const s = aiWaiting.get(m.id);
+      aiWaiting.delete(m.id);
+      if (!aiWaiting.size) aiNote = '';
+      if (!s) return;
+      s.busy = false;
+      if (m.type === 'done') {
+        s.matte = new Uint8Array(m.matte);
+        if (sheets.includes(s)) { process(s); toast(`The model found the background in ${Math.round(m.ms / 1000)} s`); }
+      } else {
+        s.method = 'color';
+        toast(`The model did not run: ${m.message}`.slice(0, 160));
+      }
+      refresh();
+    };
+    aiWorker.onerror = e => {
+      for (const s of aiWaiting.values()) { s.busy = false; s.method = 'color'; }
+      aiWaiting.clear(); aiNote = ''; aiWorker = null;
+      toast(`The model could not be started: ${e.message || 'no connection?'}`.slice(0, 160));
+      refresh();
+    };
+  }
+  sheet.busy = true;
+  aiWaiting.set(sheet.id, sheet);
+  aiNote ||= 'Starting the model…';
+  aiWorker.postMessage({ id: sheet.id, data: sheet.src.buffer.slice(0), width: sheet.w, height: sheet.h });
+  refresh();
 }
 
 // ------------------------------------------------------------ work by hand
@@ -576,6 +636,8 @@ function refresh() {
     return el;
   }));
   $('bgOn').checked = !!current?.on;
+  $('method').value = current?.method || opt.method;
+  $('aiNote').textContent = current?.busy ? aiNote : '';
   $('bgColor').value = hex(current?.color || [255, 255, 255]);
   $('bgAuto').classList.toggle('on', !!current?.auto);
   $('bgPick').classList.toggle('on', picking);
@@ -813,7 +875,16 @@ for (const el of document.querySelectorAll('[data-opt]')) {
 }
 $('fillColor').hidden = opt.fill !== 'custom';
 
-$('bgOn').addEventListener('change', e => { if (current) { current.on = e.target.checked; process(current); refresh(); } });
+$('bgOn').addEventListener('change', e => { if (current) { current.on = e.target.checked; process(current); refresh(); wantMatte(current); } });
+$('method').addEventListener('change', e => {
+  opt.method = e.target.value;   // and for the pictures opened from now on
+  save();
+  if (!current) return;
+  current.method = e.target.value;
+  process(current);
+  refresh();
+  wantMatte(current);
+});
 $('bgColor').addEventListener('input', e => {
   if (!current) return;
   current.color = rgb(e.target.value); current.auto = false; current.on = true;
@@ -889,6 +960,7 @@ const TIPS = [
   ['aside section:nth-of-type(2) h2', 'How the background is made transparent. It goes by colour: everything close enough to the background colour, starting from the border of the picture.'],
   ['aside section:nth-of-type(3) h2', 'The boxes in the picture. Each separate thing that is left when the background is gone gets a box; drag in the picture to draw one yourself.'],
   ['aside section:nth-of-type(4) h2', 'What the exported pictures look like. Export images gives one PNG per view, named name_front.png and so on.'],
+  ['#method', 'By colour: everything close to the background colour goes. Sharp edges on a plain sheet; leaves closed-in gaps and shadows. By AI model: a model (IS-Net) finds the figures themselves, gaps and shadows included, on any background; softer edges, about 15 seconds a picture, and a download of 180 MB the first time. Both: the colour cut, with what the model calls background taken away as well. All of it runs on this computer.'],
   ['#bgOn', 'Off: the picture is used as it is, for one that is already cut out. Erasing by hand still works.'],
   ['[data-opt=tolerance]', 'How far a colour may be from the background colour and still be removed. Raise it if background or shadow is left; lower it if light parts of the figure disappear. Erase area uses it too.'],
   ['[data-opt=soft]', 'Beyond the tolerance, colours this much further away fade out gradually instead of being cut hard. Gives smoother edges and thins out soft shadows.'],

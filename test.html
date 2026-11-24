@@ -3,7 +3,7 @@
 <title>Image Forge tests</title>
 <pre id="log">running</pre>
 <script type="module">
-import { unzip, floodMask, paintMask, alphaShare, borderColor, removeBackground, contentBounds, readingOrder, detectParts, layoutViews, crc32, zip } from './core.js';
+import { applyMatte, unzip, floodMask, paintMask, alphaShare, borderColor, removeBackground, contentBounds, readingOrder, detectParts, layoutViews, crc32, zip } from './core.js';
 
 const lines = [];
 let failed = 0;
@@ -147,6 +147,19 @@ test('crc32 and the zip archive', () => {
   const dir = v.getUint32(end + 16, true);
   eq([v.getUint32(dir, true), v.getUint32(dir + 16, true), v.getUint32(dir + 42, true)], [0x02014b50, crc32(enc.encode('hello')), 0]);
   eq(z.length, (30 + 5 + 5) + (30 + 5 + 1) + 2 * (46 + 5) + 22);
+});
+
+test('a matte sets the alpha, cleans the colour, and leaves what is kept by hand', () => {
+  const GREY = [128, 128, 128];
+  const src = picture(4, 1, WHITE, [[1, 0, 3, 1, GREY]]);
+  // Pixel 1 is half grey thing, half white background: (128 + 255) / 2.
+  src.set([192, 192, 192, 255], 4);
+  const matte = new Uint8Array([0, 128, 255, 0]), mask = new Uint8Array([0, 0, 0, 2]);
+  const out = applyMatte(new Uint8ClampedArray(src), 4, 1, matte, { mask, color: WHITE });
+  eq([out[3], out[7], out[11], out[15]], [0, 128, 255, 255]);
+  ok(Math.abs(out[4] - 128) <= 2, 'colour ' + out[4]);
+  const plain = applyMatte(new Uint8ClampedArray(src), 4, 1, matte);
+  eq([plain[4], plain[7], plain[15]], [192, 128, 0]);
 });
 
 test('an archive read back gives the files that went in', () => {

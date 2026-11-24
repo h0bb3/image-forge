@@ -22,6 +22,13 @@ Nothing is uploaded; the picture never leaves the page.
 
 ## Details
 
+- **By AI model.** *Method* in the Background section chooses how the
+  background is found. *By AI model* runs IS-Net in the browser: it finds
+  the figures themselves, so closed-in gaps, shadows and backgrounds that
+  are not plain go too. It takes about 15 seconds a picture and downloads
+  the model (180 MB) the first time; the browser keeps it. *Both* takes the
+  sharp cut by colour and removes what the model calls background as well.
+  The choice is remembered, and the erasing by hand works on top of all three.
 - **Background.** The colour is taken from the border of the picture, or
   picked (the colour field, or *Pick in picture*). *Tolerance* is how far
   from that colour still counts as background, *Soft edge* fades the
@@ -58,8 +65,13 @@ Nothing is uploaded; the picture never leaves the page.
   the original while held, arrows nudge the selected part.
 - `?src=address` opens a picture from an address, if its site allows that.
 
-The background removal goes by colour, which suits generated sheets on a
-plain background. It does not cut a subject out of a photograph.
+The model is IS-Net, general use, by Xuebin Qin et al. ("Highly Accurate
+Dichotomous Image Segmentation", Apache 2.0), in the ONNX conversion of
+[rembg](https://github.com/danielgatis/rembg) as hosted by
+[BritishWerewolf/IS-Net](https://huggingface.co/BritishWerewolf/IS-Net). It
+runs on [ONNX Runtime Web](https://onnxruntime.ai). Both are loaded from
+their own hosts when *By AI model* is first chosen; without that choice the
+page loads nothing from elsewhere.
 
 ## Development
 

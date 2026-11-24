@@ -117,7 +117,14 @@ export function removeBackground(src, w, h, { color, tolerance, soft = 0, holes 
       out[p + 3] = src[p + 3] * alpha;
     }
   }
-  for (let k = 0; k < choke; k++) {
+  chokeAlpha(out, w, h, choke);
+  return out;
+}
+
+/** Shrinks what is visible by `times` pixels all round, in place. */
+export function chokeAlpha(out, w, h, times) {
+  const n = w * h;
+  for (let k = 0; k < times; k++) {
     const a = new Uint8Array(n);
     for (let i = 0; i < n; i++) a[i] = out[i * 4 + 3];
     for (let y = 0, i = 0; y < h; y++) {
@@ -132,6 +139,28 @@ export function removeBackground(src, w, h, { color, tolerance, soft = 0, holes 
       }
     }
   }
+}
+
+/**
+ * Applies a matte (the share of the thing in each pixel, 0-255, as a model
+ * gives it) to a picture, in place: its alpha is multiplied by it. Pixels
+ * kept by hand (`mask` 2) are left. With `color`, the background colour,
+ * the part-transparent pixels lose the background's share of their colour.
+ */
+export function applyMatte(out, w, h, matte, { mask = null, color = null, choke = 0 } = {}) {
+  for (let i = 0, p = 0; i < w * h; i++, p += 4) {
+    if (mask && mask[i] === 2) continue;
+    const m = matte[i];
+    if (m >= 255) continue;
+    if (color && m > 0 && out[p + 3] === 255) {
+      const a = m / 255;
+      out[p] = color[0] + (out[p] - color[0]) / a;
+      out[p + 1] = color[1] + (out[p + 1] - color[1]) / a;
+      out[p + 2] = color[2] + (out[p + 2] - color[2]) / a;
+    }
+    out[p + 3] = out[p + 3] * m / 255;
+  }
+  chokeAlpha(out, w, h, choke);
   return out;
 }
 

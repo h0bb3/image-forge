@@ -70,6 +70,14 @@
     <section>
       <h2>Background</h2>
       <label class="check"><input type="checkbox" id="bgOn"> Remove the background</label>
+      <label class="field">Method
+        <select id="method">
+          <option value="color">By colour</option>
+          <option value="ai">By AI model</option>
+          <option value="both">Both</option>
+        </select>
+      </label>
+      <p class="note" id="aiNote"></p>
       <div class="row">
         <input type="color" id="bgColor" title="The background colour">
         <button type="button" id="bgAuto" title="Take the colour from the border of the picture">Auto</button>
