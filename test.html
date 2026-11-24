@@ -3,7 +3,7 @@
 <title>Image Forge tests</title>
 <pre id="log">running</pre>
 <script type="module">
-import { floodMask, paintMask, alphaShare, borderColor, removeBackground, contentBounds, readingOrder, detectParts, layoutViews, crc32, zip } from './core.js';
+import { unzip, floodMask, paintMask, alphaShare, borderColor, removeBackground, contentBounds, readingOrder, detectParts, layoutViews, crc32, zip } from './core.js';
 
 const lines = [];
 let failed = 0;
@@ -147,6 +147,17 @@ test('crc32 and the zip archive', () => {
   const dir = v.getUint32(end + 16, true);
   eq([v.getUint32(dir, true), v.getUint32(dir + 16, true), v.getUint32(dir + 42, true)], [0x02014b50, crc32(enc.encode('hello')), 0]);
   eq(z.length, (30 + 5 + 5) + (30 + 5 + 1) + 2 * (46 + 5) + 22);
+});
+
+test('an archive read back gives the files that went in', () => {
+  const enc = new TextEncoder(), dec = new TextDecoder();
+  const files = [{ name: 'project.json', data: enc.encode('{"a":1}') }, { name: 'r\u00e4v.png', data: new Uint8Array([0, 255, 7]) }, { name: 'empty', data: new Uint8Array(0) }];
+  const back = unzip(zip(files));
+  eq(back.map(f => [f.name, [...f.data]]), files.map(f => [f.name, [...f.data]]));
+  eq(dec.decode(back[0].data), '{"a":1}');
+  let threw = false;
+  try { unzip(enc.encode('this is no archive at all, only text')); } catch { threw = true; }
+  ok(threw, 'text passed as an archive');
 });
 
 document.getElementById('log').textContent = lines.join('\n') + `\n\n${failed ? failed + ' FAILED' : 'all ' + lines.length + ' passed'}`;

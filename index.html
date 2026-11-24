@@ -11,13 +11,14 @@
 <body>
 <header>
   <h1><span class="mark" aria-hidden="true"></span>Image Forge</h1>
-  <button id="open" type="button">Open image</button>
+  <button id="open" type="button" title="Open one or more pictures, or a saved project (.imageforge). Dropping files on the page does the same.">Open</button>
   <button id="paste" type="button" title="Paste a picture from the clipboard (Ctrl+V)">Paste</button>
+  <button id="saveProject" type="button" title="Save everything to one project file: the pictures, the parts and their views, what was erased by hand and all settings. Open that file later to go on where you were.">Save project</button>
   <span class="grow"></span>
-  <a href="https://github.com/h0bb3/image-forge" class="quiet">Source</a>
+  <a href="https://github.com/h0bb3/image-forge" class="quiet" title="The code of this page, on GitHub (MIT licence)">Source</a>
   <button id="exportZip" type="button" title="Download the labelled views in one zip (Ctrl+Shift+S)">Zip</button>
   <button id="export" type="button" class="primary" title="Download each labelled view as its own PNG (Ctrl+S)">Export images</button>
-  <input id="file" type="file" accept="image/*" multiple hidden>
+  <input id="file" type="file" accept="image/*,.imageforge" multiple hidden>
 </header>
 
 <main>
@@ -34,7 +35,7 @@
     <div id="tagbar"></div>
     <div id="empty">
       <div>
-        <p class="big">Drop a picture here, paste one, or <button type="button" id="open2" class="link">open a file</button>.</p>
+        <p class="big">Drop a picture or a saved project here, paste a picture, or <button type="button" id="open2" class="link">open a file</button>.</p>
         <p>The background is removed, the separate parts are found, and you say which is the front, back, left, right, top and bottom. Nothing leaves your computer.</p>
         <p><button type="button" id="sample" class="link">Try it with a sample sheet</button></p>
       </div>
@@ -42,6 +43,7 @@
     <div id="sheets"></div>
     <div id="status"><span id="info"></span><span class="grow"></span><span id="hint">Drag: mark a part · Wheel: zoom · Space or middle button: pan · 0: fit</span></div>
     <div id="toast" role="status"></div>
+    <div id="tip" role="tooltip"></div>
   </section>
 
   <aside>
@@ -84,7 +86,7 @@
     <section>
       <h2>Parts</h2>
       <div class="row">
-        <button type="button" id="detect">Find parts again</button>
+        <button type="button" id="detect" title="Throw away all boxes of this picture, and their views, and box the separate things in it afresh">Find parts again</button>
         <button type="button" id="remove" title="Remove the selected part (Delete)">Remove selected</button>
       </div>
       <label class="slider">Join pieces closer than <output></output><input type="range" data-opt="gap" min="0" max="8" step="0.2"></label>

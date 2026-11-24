@@ -1,7 +1,7 @@
 // Image Forge: the page. The image work itself is in core.js.
 import {
   LABELS, alphaShare, borderColor, removeBackground, contentBounds, detectParts, layoutViews, zip,
-  floodMask, paintMask,
+  floodMask, paintMask, unzip,
 } from './core.js';
 
 const $ = id => document.getElementById(id);
@@ -20,6 +20,7 @@ const defaults = {
 };
 const opt = { ...defaults };
 try { Object.assign(opt, JSON.parse(localStorage.getItem('image-forge') || '{}')); } catch { /* defaults */ }
+opt.derived = { ...opt.derived };   // never the object of the defaults
 const save = () => { try { localStorage.setItem('image-forge', JSON.stringify(opt)); } catch { /* not kept */ } };
 
 // ------------------------------------------------------------------- state
@@ -56,7 +57,8 @@ function debounce(fn, ms) {
 const allBoxes = () => sheets.flatMap(s => s.boxes.map(box => ({ sheet: s, box })));
 
 // ------------------------------------------------------------ opening files
-async function addImage(blob, name) {
+/** A sheet of a picture, not yet worked on nor shown. */
+async function makeSheet(blob, name) {
   let bitmap;
   try { bitmap = await createImageBitmap(blob); } catch { toast(`Could not read ${name || 'the picture'}`); return; }
   const w = bitmap.width, h = bitmap.height;
@@ -69,21 +71,111 @@ async function addImage(blob, name) {
   const canvas = document.createElement('canvas');
   canvas.width = w; canvas.height = h;
   const sheet = {
-    id: nextId++, name: (name || 'picture').replace(/\.[^.]+$/, ''), w, h, src, out: src, srcCanvas, canvas,
+    id: nextId++, name: name || 'picture', blob, w, h, src, out: src, srcCanvas, canvas,
     on: alphaShare(src) < 0.02,   // a picture that is already cut out is left alone
     auto: true, color: borderColor(src, w, h),
     boxes: [], found: true,       // found: the boxes are as detected, nobody has touched them
     mask: null, undo: [],         // the work by hand: 1 erased, 2 kept (see core.js)
     view: null,
   };
+  return sheet;
+}
+
+async function addImage(blob, name) {
+  const sheet = await makeSheet(blob, (name || 'picture').replace(/\.[^.]+$/, ''));
+  if (!sheet) return;
   sheets.push(sheet);
   process(sheet);
   show(sheet);
   if (!nameTyped) $('name').value = sheets[0].name;
 }
 
+const isProject = f => /\.imageforge$/i.test(f.name || '');
+
 async function addFiles(files) {
-  for (const f of files) if (f.type.startsWith('image/')) await addImage(f, f.name);
+  for (const f of files) {
+    if (isProject(f)) await openProject(f);
+    else if (f.type.startsWith('image/')) await addImage(f, f.name);
+  }
+}
+
+// ----------------------------------------------------------------- projects
+// A project is a zip: project.json, the pictures as they were opened, and
+// the work by hand on each as a PNG (its red is 100 times the mask).
+async function maskPng(sheet) {
+  const c = document.createElement('canvas');
+  c.width = sheet.w; c.height = sheet.h;
+  const image = new ImageData(sheet.w, sheet.h), d = image.data;
+  for (let i = 0; i < sheet.mask.length; i++) { d[i * 4] = sheet.mask[i] * 100; d[i * 4 + 3] = 255; }
+  c.getContext('2d').putImageData(image, 0, 0);
+  return new Uint8Array(await (await toPng(c)).arrayBuffer());
+}
+
+async function readMask(bytes, w, h) {
+  const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }), { colorSpaceConversion: 'none' });
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.drawImage(bitmap, 0, 0);
+  const d = g.getImageData(0, 0, w, h).data, mask = new Uint8Array(w * h);
+  for (let i = 0; i < mask.length; i++) mask[i] = Math.round(d[i * 4] / 100);
+  return mask;
+}
+
+async function saveProject() {
+  if (!sheets.length) { toast('Nothing to save yet: open a picture first'); return; }
+  const files = [], list = [];
+  for (const [i, s] of sheets.entries()) {
+    const ext = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif' }[s.blob.type] || 'img';
+    const file = `image-${i + 1}.${ext}`;
+    files.push({ name: file, data: new Uint8Array(await s.blob.arrayBuffer()) });
+    let mask = null;
+    if (s.mask && s.mask.some(v => v)) {
+      mask = `mask-${i + 1}.png`;
+      files.push({ name: mask, data: await maskPng(s) });
+    }
+    list.push({
+      name: s.name, file, type: s.blob.type, mask, on: s.on, auto: s.auto, color: s.color, found: s.found,
+      boxes: s.boxes.map(({ x, y, w, h, label }) => ({ x, y, w, h, label })),
+    });
+  }
+  const project = { format: 'image-forge', version: 1, name: $('name').value, current: sheets.indexOf(current), opt, sheets: list };
+  files.unshift({ name: 'project.json', data: new TextEncoder().encode(JSON.stringify(project, null, 1)) });
+  download(new Blob([zip(files)], { type: 'application/zip' }), `${fileName('x').slice(0, -6)}.imageforge`);
+  toast('Project saved: open the file again to go on');
+}
+
+async function openProject(file) {
+  let entries, project;
+  try {
+    entries = unzip(new Uint8Array(await file.arrayBuffer()));
+    project = JSON.parse(new TextDecoder().decode(entries.find(e => e.name === 'project.json').data));
+    if (project.format !== 'image-forge' || !Array.isArray(project.sheets)) throw new Error('format');
+  } catch { toast(`${file.name} is not an Image Forge project`); return; }
+  const opened = [];
+  for (const s of project.sheets) {
+    const entry = entries.find(e => e.name === s.file);
+    const sheet = entry && await makeSheet(new Blob([entry.data], { type: s.type || 'image/png' }), s.name);
+    if (!sheet) continue;
+    sheet.on = !!s.on; sheet.auto = !!s.auto; sheet.found = !!s.found;
+    if (Array.isArray(s.color)) sheet.color = s.color;
+    sheet.boxes = (s.boxes || []).map(b => ({ id: nextId++, x: b.x, y: b.y, w: b.w, h: b.h, label: LABELS.includes(b.label) ? b.label : null }));
+    const mask = s.mask && entries.find(e => e.name === s.mask);
+    if (mask) sheet.mask = await readMask(mask.data, sheet.w, sheet.h);
+    opened.push(sheet);
+  }
+  if (!opened.length) { toast(`${file.name} holds no pictures`); return; }
+  // The project takes the place of what was open.
+  for (const key of Object.keys(defaults)) if (project.opt && key in project.opt) opt[key] = project.opt[key];
+  opt.derived = { ...(project.opt?.derived || {}) };
+  save();
+  syncControls();
+  sheets.length = 0; deriving = null; tool = 'select'; picking = false;
+  sheets.push(...opened);
+  for (const s of sheets) process(s, false);
+  $('name').value = project.name || ''; nameTyped = true;
+  show(sheets[project.current] || sheets[0]);
+  toast(`Opened ${file.name}`);
 }
 
 function closeSheet(sheet) {
@@ -308,7 +400,7 @@ for (const label of LABELS) {
   el.innerHTML = `<span class="name">${label}</span><kbd>${key}</kbd>
     <span class="src"></span>
     <span class="acts"><span data-act="from" title="Take this view from another view, mirrored or turned">from…</span><span data-act="save" title="Download this view">save</span><span data-act="clear" title="Empty this view">×</span></span>`;
-  el.title = `${label[0].toUpperCase()}${label.slice(1)} (${key})`;
+  el.title = `The ${label} view. With a part selected: click to give it this view (key ${key}). Otherwise: click to select its part.`;
   const act = e => {
     const hit = allBoxes().find(x => x.box.label === label);
     const what = e.target.dataset?.act;
@@ -343,6 +435,7 @@ const tagbar = $('tagbar');
 for (const label of LABELS) {
   const b = document.createElement('button');
   b.type = 'button'; b.textContent = label; b.dataset.label = label;
+  b.title = `The selected part is the ${label} view (key ${Object.keys(KEYS).find(k => KEYS[k] === label).toUpperCase()})`;
   b.style.setProperty('--c', COLORS[label]);
   b.addEventListener('click', () => { if (selected) assign(selected, label); view.focus(); });
   tagbar.append(b);
@@ -699,12 +792,15 @@ window.addEventListener('keyup', e => {
 });
 
 // ----------------------------------------------------------------- controls
+const syncers = [];
+const syncControls = () => { for (const sync of syncers) sync(); $('fillColor').hidden = opt.fill !== 'custom'; };
 for (const el of document.querySelectorAll('[data-opt]')) {
   const key = el.dataset.opt, out = el.closest('label')?.querySelector('output');
   const unit = { gap: ' %', padding: ' %', choke: ' px' }[key] || '';
   const showValue = () => { if (out) out.textContent = opt[key] + unit; };
-  if (el.type === 'checkbox') el.checked = !!opt[key]; else el.value = opt[key];
-  showValue();
+  const sync = () => { if (el.type === 'checkbox') el.checked = !!opt[key]; else el.value = opt[key]; showValue(); };
+  sync();
+  syncers.push(sync);
   el.addEventListener(el.type === 'range' || el.type === 'color' ? 'input' : 'change', () => {
     opt[key] = el.type === 'checkbox' ? el.checked : el.type === 'range' || key === 'size' ? Number(el.value) : el.value;
     save();
@@ -743,6 +839,7 @@ for (const id of ['deriveFrom', 'deriveMirror', 'deriveTurn']) {
 }
 $('deriveOff').addEventListener('click', () => { delete opt.derived[deriving]; deriving = null; save(); refresh(); });
 $('deriveDone').addEventListener('click', () => { deriving = null; refresh(); });
+$('saveProject').addEventListener('click', saveProject);
 $('export').addEventListener('click', exportImages);
 $('exportZip').addEventListener('click', exportZip);
 $('undo').addEventListener('click', undo);
@@ -783,6 +880,70 @@ async function addUrl(url) {
     await addImage(await res.blob(), url.split(/[/?#]/).filter(Boolean).pop());
   } catch { toast('Could not load ' + url); }
 }
+
+// ------------------------------------------------------------- explanations
+// An (i) beside each setting, and one bubble that shows the explanation of
+// whatever is under the pointer: of an (i) at once, of a button after a moment.
+const TIPS = [
+  ['aside section:nth-of-type(1) h2', 'The six views a 3D tool asks for. Each can hold one part of a picture, or be taken from another view (from…). What is shown here is exactly what is exported.'],
+  ['aside section:nth-of-type(2) h2', 'How the background is made transparent. It goes by colour: everything close enough to the background colour, starting from the border of the picture.'],
+  ['aside section:nth-of-type(3) h2', 'The boxes in the picture. Each separate thing that is left when the background is gone gets a box; drag in the picture to draw one yourself.'],
+  ['aside section:nth-of-type(4) h2', 'What the exported pictures look like. Export images gives one PNG per view, named name_front.png and so on.'],
+  ['#bgOn', 'Off: the picture is used as it is, for one that is already cut out. Erasing by hand still works.'],
+  ['[data-opt=tolerance]', 'How far a colour may be from the background colour and still be removed. Raise it if background or shadow is left; lower it if light parts of the figure disappear. Erase area uses it too.'],
+  ['[data-opt=soft]', 'Beyond the tolerance, colours this much further away fade out gradually instead of being cut hard. Gives smoother edges and thins out soft shadows.'],
+  ['[data-opt=defringe]', 'The outermost pixels of a figure are a blend of figure and background. This gives them transparency and the colour of the figure, so no light or dark rim follows the cut-out.'],
+  ['[data-opt=choke]', 'Cuts this many pixels off the edge all round. For a rim of background that is still left.'],
+  ['[data-opt=holes]', 'Also removes background-coloured areas that are closed in by the figure, such as the gap between an arm and the body. Careful: it removes highlights and white eyes too. Erase area does the same for one spot.'],
+  ['#original', 'Shows the picture as it was opened, to compare.'],
+  ['[data-opt=gap]', 'Loose pieces closer to each other than this (in percent of the longer side of the picture) count as one part. Raise it if a figure falls apart into several boxes; lower it if two figures share one.'],
+  ['#name', 'The start of the file names: name_front.png, name_back.png … and of the project file.'],
+  ['[data-opt=trim]', 'Cuts each view down to what is visible inside its box, so the box need not be drawn precisely.'],
+  ['[data-opt=padding]', 'Empty space around the figure, in percent of its longer side.'],
+  ['[data-opt=square]', 'Makes every picture square, with the figure in the middle.'],
+  ['[data-opt=same]', 'Gives all views the same picture size, that of the largest. The figures then keep their size relative to each other, which tools that build 3D from views expect.'],
+  ['[data-opt=size]', 'Scales the exported pictures so that their longer side has this many pixels.'],
+  ['[data-opt=fill]', 'What is behind the figure in the exported pictures: nothing (transparent), or a colour.'],
+];
+for (const [selector, text] of TIPS) {
+  const el = document.querySelector(selector);
+  if (!el) continue;
+  const i = document.createElement('span');
+  i.className = 'info'; i.textContent = 'i'; i.tabIndex = 0; i.dataset.tip = text;
+  i.setAttribute('role', 'note'); i.setAttribute('aria-label', text);
+  i.addEventListener('click', e => e.preventDefault());   // not a click on the setting it sits in
+  const label = el.closest('label');
+  if (!label) el.append(i);
+  else if (label.classList.contains('slider')) label.insertBefore(i, label.querySelector('output'));
+  else if (label.classList.contains('check')) label.append(i);
+  else label.insertBefore(i, label.querySelector('input, select'));
+}
+for (const el of document.querySelectorAll('[title]')) { el.dataset.tip = el.title; el.removeAttribute('title'); }
+
+const tip = $('tip');
+let tipFor = null, tipTimer;
+function showTip(el) {
+  tip.textContent = el.dataset.tip;
+  tip.style.display = 'block';
+  const r = el.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
+  let y = r.bottom + 8;
+  if (y + h > window.innerHeight - 6) y = Math.max(6, r.top - h - 8);
+  tip.style.left = Math.round(clamp(r.left + r.width / 2 - w / 2, 6, Math.max(6, window.innerWidth - w - 6))) + 'px';
+  tip.style.top = Math.round(y) + 'px';
+}
+function hideTip() { clearTimeout(tipTimer); tipFor = null; tip.style.display = 'none'; }
+document.addEventListener('pointerover', e => {
+  const el = e.target.closest?.('[data-tip]');
+  if (el === tipFor) return;
+  hideTip();
+  if (!el) return;
+  tipFor = el;
+  tipTimer = setTimeout(() => showTip(el), el.classList.contains('info') ? 0 : 450);
+});
+document.addEventListener('pointerdown', hideTip);
+document.addEventListener('scroll', hideTip, true);
+document.addEventListener('focusin', e => { if (e.target.classList?.contains('info')) { hideTip(); tipFor = e.target; showTip(e.target); } });
+document.addEventListener('focusout', e => { if (e.target.classList?.contains('info')) hideTip(); });
 
 new ResizeObserver(() => draw()).observe(view);
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { checker = null; draw(); });

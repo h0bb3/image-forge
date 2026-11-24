@@ -36,6 +36,10 @@ Nothing is uploaded; the picture never leaves the page.
   right (or back the mirrored front, and so on), and the panel that opens
   lets you choose the source, mirroring and a turn of 90° or 180°. The
   choice is remembered for the next sheet.
+- **Projects.** *Save project* writes one `.imageforge` file with the
+  pictures, the parts and their views, what was erased by hand and all
+  settings. Open or drop that file later to go on where you were. (It is a
+  zip of `project.json`, the pictures and the masks.)
 - **By hand.** The tools at the top left of the picture. *Erase area* (W):
   click an area that should have gone, such as the gap between two legs,
   and all of it that is one colour becomes transparent; click again where a

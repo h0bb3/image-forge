@@ -341,3 +341,21 @@ export function zip(files, date = new Date()) {
   for (const c of all) { out.set(c, at); at += c.length; }
   return out;
 }
+
+/** The files of an archive made by `zip` (stored ones only), as {name, data}. */
+export function unzip(bytes) {
+  const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), dec = new TextDecoder(), out = [];
+  let end = bytes.length - 22;
+  while (end >= 0 && v.getUint32(end, true) !== 0x06054b50) end--;
+  if (end < 0) throw new Error('not a zip archive');
+  let p = v.getUint32(end + 16, true);
+  for (let i = v.getUint16(end + 10, true); i > 0; i--) {
+    if (v.getUint32(p, true) !== 0x02014b50) throw new Error('broken zip archive');
+    if (v.getUint16(p + 10, true) !== 0) throw new Error('compressed zip archive');
+    const size = v.getUint32(p + 20, true), nameLen = v.getUint16(p + 28, true), at = v.getUint32(p + 42, true);
+    const start = at + 30 + v.getUint16(at + 26, true) + v.getUint16(at + 28, true);
+    out.push({ name: dec.decode(bytes.subarray(p + 46, p + 46 + nameLen)), data: bytes.slice(start, start + size) });
+    p += 46 + nameLen + v.getUint16(p + 30, true) + v.getUint16(p + 32, true);
+  }
+  return out;
+}
