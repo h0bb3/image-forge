@@ -139,6 +139,7 @@ input[type=color] { width: 34px; height: 28px; padding: 0; border: 1px solid var
 .tile .acts { position: absolute; right: 3px; bottom: 3px; display: flex; gap: 3px; }
 .tile:not(.full) .acts [data-act=save], .tile:not(.full) .acts [data-act=clear] { display: none; }
 .tile .acts [data-act=from] { opacity: .75; }
+.tile.full .acts [data-act=from] { display: none; }   /* a full view: click it, or empty it first */
 .tile .src {
   position: absolute; left: 0; right: 0; bottom: 24px; text-align: center; font-size: 10px; line-height: 14px;
   background: var(--panel); color: var(--text); opacity: .9;
