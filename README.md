@@ -4,6 +4,9 @@ Cut the views out of a character or object sheet, in the browser.
 
 **https://h0bb3.github.io/image-forge/**
 
+[![A minute of Image Forge: the demo film](demo.jpg)](https://h0bb3.github.io/image-forge/demo.mp4)
+*[The demo film](https://h0bb3.github.io/image-forge/demo.mp4), one minute. It is recorded by `tools/make_demo.py`, which drives the page itself.*
+
 Image generators often answer with one picture holding several views of the
 same thing: front, side, back. Tools that build a 3D model from views want
 them as separate pictures with no background. Image Forge does the cutting:
@@ -84,4 +87,11 @@ Plain HTML, CSS and JavaScript modules; no build step and no dependencies.
 Serve the folder (`python -m http.server`) and open it. `test.html` runs the
 tests of `core.js` in the browser. `tools/make_sample.py` draws `sample.png`.
 
-MIT licence.
+## Licence
+
+MIT: see [LICENSE](LICENSE). Use it, change it, ship it, also commercially;
+keep the notice.
+
+The page itself has no dependencies. Two things are fetched from their own
+hosts, and only when *By AI model* is chosen: ONNX Runtime Web (MIT) and the
+IS-Net model (Apache 2.0). Neither is part of this repository.
