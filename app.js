@@ -501,7 +501,7 @@ view.addEventListener('pointerdown', e => {
   } else if (tool !== 'select') {
     const q = toImage(p);
     remember();
-    drag = { kind: 'brush', last: q };
+    drag = { kind: 'brush', p, last: q };
     stroke(q, q);
   } else {
     const h = hit(p);
