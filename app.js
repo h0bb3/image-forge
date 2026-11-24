@@ -1,7 +1,8 @@
 // Image Forge: the page. The image work itself is in core.js.
+import { viewer } from './view3d.js';
 import {
   LABELS, alphaShare, borderColor, removeBackground, contentBounds, detectParts, layoutViews, zip,
-  floodMask, paintMask, unzip, applyMatte,
+  floodMask, paintMask, unzip, applyMatte, quads, glb,
 } from './core.js';
 
 const $ = id => document.getElementById(id);
@@ -16,6 +17,7 @@ const defaults = {
   trim: true, padding: 6, square: true, same: true, size: 0, fill: 'transparent', fillColor: '#ffffff',
   brush: 30,
   method: 'color',   // how the background is found: color | ai | both
+  box3d: false, swap3d: false,   // the 3D view: on the sides of a box; left and right exchanged
   // Views taken from another view: {left: {from: 'right', mirror: true, turn: 0}}.
   derived: {},
 };
@@ -453,6 +455,56 @@ async function exportOne(label) {
   if (i >= 0) download(await toPng(render(items)[i]), fileName(label));
 }
 
+// ------------------------------------------------------------------ in 3D
+// The views as flat quads standing in space: to look at, and as a .glb.
+let three = null;
+
+/** The picture of each view as it is, trimmed, with nothing around it. */
+function cutouts() {
+  return collect().map(it => {
+    const k = Math.min(1, 2048 / Math.max(it.size.w, it.size.h));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(it.size.w * k)); c.height = Math.max(1, Math.round(it.size.h * k));
+    const g = c.getContext('2d'), side = it.turn % 180 !== 0;
+    g.imageSmoothingQuality = 'high';
+    g.translate(c.width / 2, c.height / 2);
+    g.rotate(it.turn * Math.PI / 180);
+    if (it.mirror) g.scale(-1, 1);
+    const dw = side ? c.height : c.width, dh = side ? c.width : c.height;
+    g.drawImage(it.sheet.canvas, it.r.x, it.r.y, it.r.w, it.r.h, -dw / 2, -dh / 2, dw, dh);
+    return { label: it.label, size: it.size, canvas: c };
+  });
+}
+
+function solid() {
+  const cuts = cutouts();
+  const sizes = Object.fromEntries(cuts.map(c => [c.label, c.size]));
+  return quads(sizes, { box: opt.box3d, swap: opt.swap3d }).map(q => ({ ...q, canvas: cuts.find(c => c.label === q.label).canvas }));
+}
+
+function show3d() {
+  if (!collect().length) { toast('Nothing to stand up yet: give a part a view first'); return; }
+  $('three').style.display = 'flex';
+  three ||= viewer($('gl'));
+  if (!three) { $('three').style.display = 'none'; toast('This browser has no WebGL'); return; }
+  three.start();
+  three.show(solid());
+  for (const b of document.querySelectorAll('[data-box3d]')) b.classList.toggle('on', (b.dataset.box3d === '1') === !!opt.box3d);
+  $('swap3d').checked = !!opt.swap3d;
+}
+
+function hide3d() {
+  $('three').style.display = 'none';
+  three?.stop();
+}
+
+async function saveGlb() {
+  const meshes = [];
+  for (const q of solid()) meshes.push({ ...q, name: q.label, png: new Uint8Array(await (await toPng(q.canvas)).arrayBuffer()) });
+  download(new Blob([glb(meshes)], { type: 'model/gltf-binary' }), `${fileName('x').slice(0, -6)}_3d.glb`);
+  toast('Saved the 3D version as a .glb');
+}
+
 // -------------------------------------------------------------------- tiles
 const tiles = {};
 for (const label of LABELS) {
@@ -826,6 +878,8 @@ window.addEventListener('keydown', e => {
   if (!current) return;
   if (k === 'o') { if (!showOriginal) { showOriginal = true; draw(); } return; }
   if (k === '0') { fit(); refresh(); return; }
+  if (k === 'escape' && $('three').style.display === 'flex') { hide3d(); return; }
+  if ($('three').style.display === 'flex') return;
   if (k === 'escape') { picking = false; if (tool !== 'select') tool = 'select'; else selected = null; refresh(); return; }
   const picked = { v: 'select', w: 'wand', e: 'erase', q: 'restore' }[k];
   if (picked) { setTool(picked); return; }
@@ -922,6 +976,13 @@ for (const id of ['deriveFrom', 'deriveMirror', 'deriveTurn']) {
 $('deriveOff').addEventListener('click', () => { delete opt.derived[deriving]; deriving = null; save(); refresh(); });
 $('deriveDone').addEventListener('click', () => { deriving = null; refresh(); });
 $('saveProject').addEventListener('click', saveProject);
+$('show3d').addEventListener('click', show3d);
+$('close3d').addEventListener('click', hide3d);
+$('saveGlb').addEventListener('click', saveGlb);
+$('swap3d').addEventListener('change', e => { opt.swap3d = e.target.checked; save(); show3d(); });
+for (const b of document.querySelectorAll('[data-box3d]')) {
+  b.addEventListener('click', () => { opt.box3d = b.dataset.box3d === '1'; save(); show3d(); });
+}
 $('export').addEventListener('click', exportImages);
 $('exportZip').addEventListener('click', exportZip);
 $('undo').addEventListener('click', undo);

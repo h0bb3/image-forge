@@ -47,6 +47,11 @@ Nothing is uploaded; the picture never leaves the page.
   pictures, the parts and their views, what was erased by hand and all
   settings. Open or drop that file later to go on where you were. (It is a
   zip of `project.json`, the pictures and the masks.)
+- **3D.** The *3D* button stands the views up as flat pictures in space:
+  crossed through the middle, or on the sides of a box. Drag to turn it.
+  *Save .glb* writes them as one glTF file (unlit, 1 unit high, on the
+  ground, facing +z) for Blender or a game engine. It is a stand-in made of
+  six pictures at most, not a model.
 - **By hand.** The tools at the top left of the picture. *Erase area* (W):
   click an area that should have gone, such as the gap between two legs,
   and all of it that is one colour becomes transparent; click again where a

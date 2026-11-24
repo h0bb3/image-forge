@@ -388,3 +388,107 @@ export function unzip(bytes) {
   }
   return out;
 }
+
+/**
+ * The views as flat quads in space. `sizes` gives the size {w, h} in pixels
+ * of the picture of each view there is. The thing stands on y = 0, is 1 high
+ * (its front, back and sides share that height scale), looks along +z, and
+ * is centred on the y axis. A view is named by where it is seen from, as in
+ * a drawing: the right view from +x, the top view from above with the front
+ * at its lower edge. `box`: each quad on its side of the box around the
+ * thing; otherwise front and back, and left and right, cross in the middle.
+ * `swap` exchanges left and right (for sheets that name the sides by the
+ * thing's own left and right). Returns, for each view, {label, positions:
+ * its corners as the picture has them (top left, top right, bottom right,
+ * bottom left; 12 numbers), doubleSided: nothing covers its other side}.
+ */
+export function quads(sizes, { box = false, swap = false } = {}) {
+  const size = l => sizes[l];
+  const most = (labels, key) => Math.max(0, ...labels.filter(size).map(l => size(l)[key]));
+  const H = most(['front', 'back', 'left', 'right'], 'h');
+  let W = most(['front', 'back'], 'w') || most(['top', 'bottom'], 'w');
+  let D = most(['left', 'right'], 'w') || most(['top', 'bottom'], 'h');
+  W ||= D; D ||= W;
+  const s = 1 / (H || Math.max(W, D) || 1);
+  const out = [];
+  for (const label of LABELS) {
+    if (!size(label)) continue;
+    const { w, h } = size(label), side = swap ? { left: 'right', right: 'left' }[label] || label : label;
+    const a = w / 2;
+    let p;
+    if (side === 'front' || side === 'back') {
+      const z = (box ? D / 2 : 0) * (side === 'front' ? 1 : -1), x = side === 'front' ? a : -a;
+      p = [-x, h, z, x, h, z, x, 0, z, -x, 0, z];
+    } else if (side === 'left' || side === 'right') {
+      const x = (box ? W / 2 : 0) * (side === 'right' ? 1 : -1), z = side === 'right' ? a : -a;
+      p = [x, h, z, x, h, -z, x, 0, -z, x, 0, z];
+    } else {
+      const y = box ? (side === 'top' ? H : 0) : H / 2, z = side === 'top' ? h / 2 : -h / 2;
+      p = [-a, y, -z, a, y, -z, a, y, z, -a, y, z];
+    }
+    const other = { front: 'back', back: 'front', left: 'right', right: 'left', top: 'bottom', bottom: 'top' }[label];
+    out.push({ label, positions: p.map(v => v * s), doubleSided: !size(other) });
+  }
+  return out;
+}
+
+/**
+ * A binary glTF (.glb) of textured quads: `meshes` are {name, positions (as
+ * from `quads`), doubleSided, png: the picture as PNG bytes}. Unlit, with
+ * the transparency of the pictures cut at half.
+ */
+export function glb(meshes) {
+  const chunks = [], views = [];
+  let length = 0;
+  const add = (bytes, target) => {
+    views.push({ buffer: 0, byteOffset: length, byteLength: bytes.length, ...(target ? { target } : {}) });
+    chunks.push(bytes);
+    length += bytes.length;
+    const pad = (4 - length % 4) % 4;
+    if (pad) { chunks.push(new Uint8Array(pad)); length += pad; }
+    return views.length - 1;
+  };
+  const bytes = a => new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+  const uv = add(bytes(new Float32Array([0, 0, 1, 0, 1, 1, 0, 1])), 34962);
+  const index = add(bytes(new Uint16Array([0, 3, 2, 0, 2, 1])), 34963);
+  const json = {
+    asset: { version: '2.0', generator: 'Image Forge' },
+    extensionsUsed: ['KHR_materials_unlit'],
+    scene: 0, scenes: [{ nodes: meshes.map((_, i) => i) }],
+    nodes: [], meshes: [], materials: [], textures: [], images: [],
+    samplers: [{ magFilter: 9729, minFilter: 9987, wrapS: 33071, wrapT: 33071 }],
+    accessors: [
+      { bufferView: uv, componentType: 5126, count: 4, type: 'VEC2' },
+      { bufferView: index, componentType: 5123, count: 6, type: 'SCALAR' },
+    ],
+    bufferViews: views, buffers: [],
+  };
+  meshes.forEach((m, i) => {
+    const p = Float32Array.from(m.positions), axis = k => [0, 1, 2, 3].map(c => p[c * 3 + k]);
+    json.accessors.push({
+      bufferView: add(bytes(p), 34962), componentType: 5126, count: 4, type: 'VEC3',
+      min: [0, 1, 2].map(k => Math.min(...axis(k))), max: [0, 1, 2].map(k => Math.max(...axis(k))),
+    });
+    json.images.push({ bufferView: add(m.png), mimeType: 'image/png', name: m.name });
+    json.textures.push({ sampler: 0, source: i });
+    json.materials.push({
+      name: m.name, alphaMode: 'MASK', alphaCutoff: 0.5, doubleSided: !!m.doubleSided,
+      pbrMetallicRoughness: { baseColorTexture: { index: i }, metallicFactor: 0, roughnessFactor: 1 },
+      extensions: { KHR_materials_unlit: {} },
+    });
+    json.meshes.push({ name: m.name, primitives: [{ attributes: { POSITION: 2 + i, TEXCOORD_0: 0 }, indices: 1, material: i }] });
+    json.nodes.push({ name: m.name, mesh: i });
+  });
+  json.buffers.push({ byteLength: length });
+  let text = new TextEncoder().encode(JSON.stringify(json));
+  if (text.length % 4) { const t = new Uint8Array(text.length + 4 - text.length % 4).fill(32); t.set(text); text = t; }
+  const out = new Uint8Array(12 + 8 + text.length + 8 + length), dv = new DataView(out.buffer);
+  dv.setUint32(0, 0x46546c67, true); dv.setUint32(4, 2, true); dv.setUint32(8, out.length, true);
+  dv.setUint32(12, text.length, true); dv.setUint32(16, 0x4e4f534a, true);
+  out.set(text, 20);
+  let at = 20 + text.length;
+  dv.setUint32(at, length, true); dv.setUint32(at + 4, 0x004e4942, true);
+  at += 8;
+  for (const ch of chunks) { out.set(ch, at); at += ch.length; }
+  return out;
+}

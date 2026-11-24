@@ -3,7 +3,7 @@
 <title>Image Forge tests</title>
 <pre id="log">running</pre>
 <script type="module">
-import { applyMatte, unzip, floodMask, paintMask, alphaShare, borderColor, removeBackground, contentBounds, readingOrder, detectParts, layoutViews, crc32, zip } from './core.js';
+import { quads, glb, applyMatte, unzip, floodMask, paintMask, alphaShare, borderColor, removeBackground, contentBounds, readingOrder, detectParts, layoutViews, crc32, zip } from './core.js';
 
 const lines = [];
 let failed = 0;
@@ -160,6 +160,45 @@ test('a matte sets the alpha, cleans the colour, and leaves what is kept by hand
   ok(Math.abs(out[4] - 128) <= 2, 'colour ' + out[4]);
   const plain = applyMatte(new Uint8ClampedArray(src), 4, 1, matte);
   eq([plain[4], plain[7], plain[15]], [192, 128, 0]);
+});
+
+test('the views stand as quads: sizes, places, and which way they face', () => {
+  const near = (a, b) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 1e-6);
+  const sizes = { front: { w: 100, h: 200 }, right: { w: 50, h: 200 }, top: { w: 100, h: 50 } };
+  const by = list => Object.fromEntries(list.map(q => [q.label, q]));
+  const cross = by(quads(sizes));
+  // The front: 0.5 wide, 1 high, in the middle, its left edge at -x (seen from +z).
+  ok(near(cross.front.positions, [-.25, 1, 0, .25, 1, 0, .25, 0, 0, -.25, 0, 0]), 'front ' + cross.front.positions);
+  // The right, seen from +x: the front of the thing (+z) at the left of its picture.
+  ok(near(cross.right.positions, [0, 1, .125, 0, 1, -.125, 0, 0, -.125, 0, 0, .125]), 'right ' + cross.right.positions);
+  // The top, at half height: the front at its lower edge.
+  ok(near(cross.top.positions, [-.25, .5, -.125, .25, .5, -.125, .25, .5, .125, -.25, .5, .125]), 'top ' + cross.top.positions);
+  eq([cross.front.doubleSided, cross.right.doubleSided], [true, true]);
+  const box = by(quads({ ...sizes, back: { w: 100, h: 200 } }, { box: true }));
+  eq([box.front.positions[2], box.back.positions[2], box.right.positions[0], box.top.positions[1]].map(v => +v.toFixed(4)), [.125, -.125, .25, 1]);
+  // The back, seen from -z: the thing's +x side at the left of its picture.
+  ok(box.back.positions[0] > 0 && box.back.positions[3] < 0, 'back ' + box.back.positions);
+  eq([box.front.doubleSided, box.back.doubleSided, box.right.doubleSided], [false, false, true]);
+  // Counter-clockwise from outside: the normal of the front points to +z, of the right to +x.
+  const normal = p => { const u = [p[9] - p[0], p[10] - p[1], p[11] - p[2]], v = [p[6] - p[0], p[7] - p[1], p[8] - p[2]]; return [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]; };
+  ok(normal(box.front.positions)[2] > 0 && normal(box.back.positions)[2] < 0 && normal(box.right.positions)[0] > 0 && normal(box.top.positions)[1] > 0, 'normals');
+  const swapped = by(quads(sizes, { box: true, swap: true }));
+  ok(swapped.right.positions[0] < 0, 'swap');
+});
+
+test('a glb holds the quads and their pictures', () => {
+  const png = new Uint8Array([137, 80, 78, 71, 1, 2, 3]);
+  const list = quads({ front: { w: 100, h: 200 }, back: { w: 100, h: 200 } }, { box: true }).map(q => ({ ...q, name: q.label, png }));
+  const g = glb(list), dv = new DataView(g.buffer);
+  eq([dv.getUint32(0, true), dv.getUint32(4, true), dv.getUint32(8, true)], [0x46546c67, 2, g.length]);
+  const n = dv.getUint32(12, true), json = JSON.parse(new TextDecoder().decode(g.slice(20, 20 + n)));
+  eq([n % 4, dv.getUint32(16, true), dv.getUint32(20 + n + 4, true)], [0, 0x4e4f534a, 0x004e4942]);
+  eq([json.meshes.length, json.images.length, json.materials[0].doubleSided, json.buffers[0].byteLength], [2, 2, false, dv.getUint32(20 + n, true)]);
+  const bin = 20 + n + 8, view = json.bufferViews[json.images[1].bufferView];
+  eq([...g.slice(bin + view.byteOffset, bin + view.byteOffset + view.byteLength)], [...png]);
+  const pos = json.accessors[json.meshes[0].primitives[0].attributes.POSITION];
+  eq([pos.min.map(v => +v.toFixed(3)), pos.max.map(v => +v.toFixed(3))], [[-.25, 0, .25], [.25, 1, .25]]);   // no side view: as deep as it is wide
+  ok(json.bufferViews.every(b => b.byteOffset % 4 === 0), 'alignment');
 });
 
 test('an archive read back gives the files that went in', () => {
