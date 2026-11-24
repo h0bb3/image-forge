@@ -84,8 +84,11 @@ export function removeBackground(src, w, h, { color, tolerance, soft = 0, holes 
       for (let y = 0, i = 0; y < h; y++) {
         for (let x = 0; x < w; x++, i++) {
           if (mark[i] || ring[i]) continue;
-          const at = j => (depth === 1 ? mark[j] : ring[j] === 1);
-          if ((x > 0 && at(i - 1)) || (x < w - 1 && at(i + 1)) || (y > 0 && at(i - w)) || (y < h - 1 && at(i + w))) list.push(i);
+          let near = false;
+          for (let yy = Math.max(0, y - 1); yy <= Math.min(h - 1, y + 1) && !near; yy++)
+            for (let xx = Math.max(0, x - 1); xx <= Math.min(w - 1, x + 1) && !near; xx++)
+              near = depth === 1 ? mark[yy * w + xx] === 1 : ring[yy * w + xx] === 1;
+          if (near) list.push(i);
         }
       }
       for (let k = from; k < list.length; k++) ring[list[k]] = depth;
