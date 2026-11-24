@@ -12,7 +12,7 @@ them as separate pictures with no background. Image Forge does the cutting:
    separate parts are found and boxed.
 2. Say which part is which: with a part selected, press **F**ront, **B**ack,
    **L**eft, **R**ight, **T**op or **D** for bottom, or click the view in
-   the bar that sits below the selected part. The next part without a view
+   the bar that sits at the selected part (above it, or where you clicked it). The next part without a view
    is selected for you, so a sheet of four is four clicks or key presses.
 3. **Export images** (Ctrl+S) downloads `name_front.png`, `name_back.png`
    and so on, one by one; **Zip** (Ctrl+Shift+S) puts them in one file. The

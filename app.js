@@ -32,6 +32,9 @@ let selected = null;     // the selected box (of the current sheet)
 let picking = false;     // the next click takes the background colour
 let tool = 'select';     // select | wand (erase an area) | erase | restore (brushes)
 let hover = null;        // where the pointer is over the picture, for the brush
+// Where the bar of views sits at the selected part: above or below it, and
+// at which x (null: its middle). A click on a part puts it by the pointer.
+const barAt = { side: 'top', x: null };
 let showOriginal = false;
 let nextId = 1;
 let nameTyped = false;
@@ -340,7 +343,9 @@ function assign(box, label) {
     // On to the next part that has no label yet.
     const i = current.boxes.indexOf(box);
     const order = [...current.boxes.slice(i + 1), ...current.boxes.slice(0, i)];
-    selected = order.find(b => !b.label) || box;
+    const next = order.find(b => !b.label) || box;
+    if (next !== selected) barAt.x = null;
+    selected = next;
   }
   current.found = false;
   refresh();
@@ -512,9 +517,11 @@ function placeTagbar(r) {
   tagbar.style.display = 'flex';
   for (const b of tagbar.children) b.classList.toggle('on', !!b.dataset.label && b.dataset.label === selected.label);
   const s = toScreen(selected, current.view), bw = tagbar.offsetWidth, bh = tagbar.offsetHeight;
-  const x = clamp(s.x + s.w / 2 - bw / 2, 4, Math.max(4, r.width - bw - 4));
-  let y = s.y + s.h + 8;
-  if (y + bh > r.height - 4) y = Math.max(4, Math.min(s.y + s.h, r.height) - bh - 8);
+  const x = clamp((barAt.x ?? s.x + s.w / 2) - bw / 2, 4, Math.max(4, r.width - bw - 4));
+  // Above the part (clear of its name tag) or below it; inside the view,
+  // and under the tools, even when the part reaches beyond.
+  const top = 52, bottom = Math.max(top, r.height - bh - 4);
+  const y = clamp(barAt.side === 'top' ? s.y - bh - 24 : s.y + s.h + 8, top, bottom);
   tagbar.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
 }
 
@@ -585,7 +592,8 @@ function paint() {
     g.fillStyle = css.getPropertyValue('--check-b'); g.fillRect(0, 0, 10, 10); g.fillRect(10, 10, 10, 10);
     checker = ctx.createPattern(c, 'repeat');
   }
-  ctx.fillStyle = checker;
+  // Behind the picture: what the exported pictures will have behind them.
+  ctx.fillStyle = opt.fill === 'transparent' ? checker : opt.fill === 'custom' ? opt.fillColor : opt.fill;
   ctx.fillRect(v.x, v.y, current.w * v.z, current.h * v.z);
   ctx.imageSmoothingEnabled = v.z < 2;
   ctx.drawImage(showOriginal ? current.srcCanvas : current.canvas, v.x, v.y, current.w * v.z, current.h * v.z);
@@ -713,6 +721,9 @@ view.addEventListener('pointerdown', e => {
     const h = hit(p);
     if (h) {
       selected = h.box;
+      const s = toScreen(h.box, current.view);
+      barAt.side = p.y < s.y + s.h / 2 ? 'top' : 'bottom';
+      barAt.x = p.x;
       drag = { kind: h.handle ? 'size' : 'move', p, box: h.box, handle: h.handle, from: { ...h.box }, moved: false };
     } else {
       drag = { kind: 'new', p, start: toImage(p), box: null };
@@ -975,7 +986,7 @@ const TIPS = [
   ['[data-opt=square]', 'Makes every picture square, with the figure in the middle.'],
   ['[data-opt=same]', 'Gives all views the same picture size, that of the largest. The figures then keep their size relative to each other, which tools that build 3D from views expect.'],
   ['[data-opt=size]', 'Scales the exported pictures so that their longer side has this many pixels.'],
-  ['[data-opt=fill]', 'What is behind the figure in the exported pictures: nothing (transparent), or a colour.'],
+  ['[data-opt=fill]', 'What is behind the figure in the exported pictures: nothing (transparent), or a colour. The workspace shows the same behind the picture, so you see the cut-out as it will be exported.'],
 ];
 for (const [selector, text] of TIPS) {
   const el = document.querySelector(selector);
