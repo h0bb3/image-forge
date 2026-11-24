@@ -1,0 +1,118 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Image Forge tests</title>
+<pre id="log">running</pre>
+<script type="module">
+import { alphaShare, borderColor, removeBackground, contentBounds, readingOrder, detectParts, layoutViews, crc32, zip } from './core.js';
+
+const lines = [];
+let failed = 0;
+function test(name, fn) {
+  try { fn(); lines.push('ok    ' + name); }
+  catch (e) { failed++; lines.push('FAIL  ' + name + ': ' + e.message); }
+}
+const eq = (a, b, what = '') => {
+  if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${what} ${JSON.stringify(a)} is not ${JSON.stringify(b)}`);
+};
+const ok = (v, what) => { if (!v) throw new Error(what); };
+
+/** A w x h picture of `bg` with filled rectangles [x, y, w, h, [r, g, b]]. */
+function picture(w, h, bg, rects) {
+  const d = new Uint8ClampedArray(w * h * 4);
+  for (let i = 0; i < w * h; i++) d.set([...bg, 255], i * 4);
+  for (const [x, y, rw, rh, c] of rects)
+    for (let yy = y; yy < y + rh; yy++) for (let xx = x; xx < x + rw; xx++) d.set([...c, 255], (yy * w + xx) * 4);
+  return d;
+}
+const alpha = (d, w, x, y) => d[(y * w + x) * 4 + 3];
+const RED = [200, 30, 30], WHITE = [255, 255, 255];
+
+test('the border colour is the commonest one on the border', () => {
+  eq(borderColor(picture(20, 20, [240, 238, 230], [[0, 0, 6, 1, RED]]), 20, 20), [240, 238, 230]);
+});
+
+test('the background goes, the thing stays, and a hole of the same colour stays too', () => {
+  const src = picture(30, 30, WHITE, [[5, 5, 20, 20, RED], [12, 12, 4, 4, WHITE]]);
+  const out = removeBackground(src, 30, 30, { color: WHITE, tolerance: 10 });
+  eq([alpha(out, 30, 0, 0), alpha(out, 30, 29, 29), alpha(out, 30, 6, 6), alpha(out, 30, 13, 13)], [0, 0, 255, 255]);
+  const holes = removeBackground(src, 30, 30, { color: WHITE, tolerance: 10, holes: true });
+  eq([alpha(holes, 30, 6, 6), alpha(holes, 30, 13, 13)], [255, 0]);
+  eq(alphaShare(out), 1 - 400 / 900);
+});
+
+test('a soft edge fades and takes the background out of the colour', () => {
+  // One pixel half way between the red and the white, beside the background.
+  const src = picture(9, 3, WHITE, [[4, 0, 5, 3, RED]]);
+  const mid = RED.map(c => Math.round((c + 255) / 2));
+  for (let y = 0; y < 3; y++) src.set([...mid, 255], (y * 9 + 4) * 4);
+  const d = Math.sqrt(mid.reduce((n, c) => n + (255 - c) ** 2, 0) / 3);
+  const out = removeBackground(src, 9, 3, { color: WHITE, tolerance: d - 20, soft: 40 });
+  const p = (1 * 9 + 4) * 4;
+  ok(Math.abs(out[p + 3] - 128) <= 2, 'alpha ' + out[p + 3]);
+  ok(Math.abs(out[p] - RED[0]) <= 3 && Math.abs(out[p + 1] - RED[1]) <= 3, 'colour ' + [...out.slice(p, p + 3)]);
+  eq(alpha(out, 9, 6, 1), 255);
+});
+
+test('shrinking the edge takes one pixel all round', () => {
+  const src = picture(20, 20, WHITE, [[5, 5, 10, 10, RED]]);
+  const out = removeBackground(src, 20, 20, { color: WHITE, tolerance: 10, choke: 1 });
+  eq(contentBounds(out, 20, 20, { x: 0, y: 0, w: 20, h: 20 }), { x: 6, y: 6, w: 8, h: 8 });
+});
+
+test('content bounds are tight, and null where there is nothing', () => {
+  const out = removeBackground(picture(40, 30, WHITE, [[10, 8, 7, 5, RED]]), 40, 30, { color: WHITE, tolerance: 10 });
+  eq(contentBounds(out, 40, 30, { x: 0, y: 0, w: 40, h: 30 }), { x: 10, y: 8, w: 7, h: 5 });
+  eq(contentBounds(out, 40, 30, { x: 12, y: 0, w: 28, h: 30 }), { x: 12, y: 8, w: 5, h: 5 });
+  eq(contentBounds(out, 40, 30, { x: 20, y: 0, w: 20, h: 30 }), null);
+});
+
+test('reading order is by rows, then from the left', () => {
+  const b = (x, y) => ({ x, y, w: 10, h: 10 });
+  eq(readingOrder([b(30, 22), b(0, 20), b(30, 3), b(0, 0)]).map(r => [r.x, r.y]), [[0, 0], [30, 3], [0, 20], [30, 22]]);
+});
+
+test('parts are found, near pieces joined, specks dropped', () => {
+  // Two things in a row and one below; the first has a detached piece 3 px away; a 2 px speck.
+  const src = picture(200, 120, WHITE, [
+    [10, 10, 40, 40, RED], [53, 20, 8, 8, RED], [120, 12, 50, 30, RED], [20, 80, 60, 30, RED], [190, 110, 2, 2, RED],
+  ]);
+  const out = removeBackground(src, 200, 120, { color: WHITE, tolerance: 10 });
+  eq(detectParts(out, 200, 120, { gap: 0.03 }), [
+    { x: 10, y: 10, w: 51, h: 40 }, { x: 120, y: 12, w: 50, h: 30 }, { x: 20, y: 80, w: 60, h: 30 },
+  ]);
+  eq(detectParts(out, 200, 120, { gap: 0 }).length, 4);
+});
+
+test('parts are found the same in a picture larger than the search grid', () => {
+  const src = picture(1200, 600, WHITE, [[101, 53, 300, 407, RED], [700, 90, 333, 200, RED]]);
+  const out = removeBackground(src, 1200, 600, { color: WHITE, tolerance: 10 });
+  eq(detectParts(out, 1200, 600), [{ x: 101, y: 53, w: 300, h: 407 }, { x: 700, y: 90, w: 333, h: 200 }]);
+});
+
+test('layout: padding, square, one size, scaled', () => {
+  const items = [{ w: 100, h: 200 }, { w: 50, h: 100 }];
+  eq(layoutViews(items, {}), [{ W: 100, H: 200, x: 0, y: 0, w: 100, h: 200 }, { W: 50, H: 100, x: 0, y: 0, w: 50, h: 100 }]);
+  eq(layoutViews(items, { padding: 10, square: true })[0], { W: 240, H: 240, x: 70, y: 20, w: 100, h: 200 });
+  const same = layoutViews(items, { padding: 10, square: true, same: true });
+  eq(same[1], { W: 240, H: 240, x: 95, y: 70, w: 50, h: 100 });
+  const scaled = layoutViews(items, { padding: 10, square: true, same: true, size: 480 });
+  eq(scaled[1], { W: 480, H: 480, x: 190, y: 140, w: 100, h: 200 });
+});
+
+test('crc32 and the zip archive', () => {
+  const enc = new TextEncoder();
+  eq(crc32(enc.encode('123456789')), 0xcbf43926);
+  const z = zip([{ name: 'a.txt', data: enc.encode('hello') }, { name: 'b.txt', data: enc.encode('!') }], new Date(2026, 0, 2, 3, 4, 6));
+  const v = new DataView(z.buffer);
+  eq(v.getUint32(0, true), 0x04034b50);
+  eq(new TextDecoder().decode(z.slice(30, 40)), 'a.txthello');
+  const end = z.length - 22;
+  eq([v.getUint32(end, true), v.getUint16(end + 10, true)], [0x06054b50, 2]);
+  const dir = v.getUint32(end + 16, true);
+  eq([v.getUint32(dir, true), v.getUint32(dir + 16, true), v.getUint32(dir + 42, true)], [0x02014b50, crc32(enc.encode('hello')), 0]);
+  eq(z.length, (30 + 5 + 5) + (30 + 5 + 1) + 2 * (46 + 5) + 22);
+});
+
+document.getElementById('log').textContent = lines.join('\n') + `\n\n${failed ? failed + ' FAILED' : 'all ' + lines.length + ' passed'}`;
+document.title = failed ? 'FAILED' : 'passed';
+</script>
