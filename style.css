@@ -67,6 +67,25 @@ main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1
 #stage.drop::after {
   content: ""; position: absolute; inset: 8px; border: 2px dashed var(--accent); border-radius: 10px; pointer-events: none;
 }
+#tools {
+  position: absolute; left: 8px; top: 8px; display: none; gap: 4px; align-items: center; flex-wrap: wrap;
+  padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / .18); max-width: calc(100% - 16px);
+}
+#tools button { background: none; border-color: transparent; padding: 4px 9px; }
+#tools button:hover { border-color: var(--line); }
+#tools button.on { background: var(--accent); color: var(--accent-text); }
+#tools button:disabled { opacity: .4; cursor: default; }
+#tools label { display: flex; align-items: center; gap: 6px; padding: 0 6px; font-size: 12px; color: var(--dim); }
+#tools input[type=range] { width: 90px; accent-color: var(--accent); }
+#tagbar {
+  position: absolute; left: 0; top: 0; display: none; gap: 3px; padding: 4px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 2px 10px rgb(0 0 0 / .3); white-space: nowrap;
+}
+#tagbar button { padding: 3px 9px; font-size: 12px; font-weight: 600; background: none; border-color: var(--c, var(--line)); }
+#tagbar button:hover, #tagbar button.on { background: var(--c, var(--line)); color: #fff; }
+#tagbar button.x { font-weight: 400; color: var(--dim); }
 #sheets { display: flex; gap: 6px; padding: 0 8px; overflow-x: auto; }
 #sheets:empty { display: none; }
 #sheets .sheet {

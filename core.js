@@ -36,16 +36,17 @@ export function borderColor(d, w, h) {
  * what is reached from the border goes: a white eye stays in a white sheet.
  * `defringe` gives the smoothed pixels of an edge, which are part thing and
  * part background, their share as alpha and the colour of the thing.
- * `choke` shrinks what is left by that many pixels.
+ * `choke` shrinks what is left by that many pixels. `mask` is the work by
+ * hand, a byte a pixel: 1 is erased whatever its colour, 2 is kept.
  */
-export function removeBackground(src, w, h, { color, tolerance, soft = 0, holes = false, defringe = false, choke = 0 }) {
+export function removeBackground(src, w, h, { color, tolerance, soft = 0, holes = false, defringe = false, choke = 0, mask = null }) {
   const out = new Uint8ClampedArray(src);
   const n = w * h, [br, bg, bb] = color, lim = tolerance + soft;
   const dist = i => {
     const p = i * 4, r = src[p] - br, g = src[p + 1] - bg, b = src[p + 2] - bb;
     return Math.sqrt((r * r + g * g + b * b) / 3);
   };
-  const pass = i => src[i * 4 + 3] < 8 || dist(i) <= lim;
+  const pass = i => !(mask && mask[i] === 2) && (src[i * 4 + 3] < 8 || dist(i) <= lim);
   const mark = new Uint8Array(n);
   if (holes) {
     for (let i = 0; i < n; i++) if (pass(i)) mark[i] = 1;
@@ -63,8 +64,10 @@ export function removeBackground(src, w, h, { color, tolerance, soft = 0, holes 
       if (i < n - w) push(i + w);
     }
   }
+  if (mask) for (let i = 0; i < n; i++) if (mask[i] === 1) mark[i] = 1;
   for (let i = 0; i < n; i++) {
     if (!mark[i]) continue;
+    if (mask && mask[i] === 1) { out[i * 4 + 3] = 0; continue; }
     const p = i * 4, d = dist(i);
     const a = d <= tolerance || soft <= 0 ? 0 : (d - tolerance) / soft;
     if (a <= 0) { out[p + 3] = 0; continue; }
@@ -130,6 +133,48 @@ export function removeBackground(src, w, h, { color, tolerance, soft = 0, holes 
     }
   }
   return out;
+}
+
+/**
+ * Sets `mask` to `value` over the area around (x, y) that is one colour:
+ * all that is reached from there through pixels within `tolerance` of the
+ * colour at that point. Returns how many pixels that was.
+ */
+export function floodMask(src, w, h, x, y, tolerance, mask, value) {
+  const n = w * h, s = (y * w + x) * 4, r0 = src[s], g0 = src[s + 1], b0 = src[s + 2];
+  const lim = tolerance * tolerance * 3;
+  const seen = new Uint8Array(n), stack = new Int32Array(n);
+  let sp = 0, count = 0;
+  const push = i => {
+    if (seen[i]) return;
+    const p = i * 4, r = src[p] - r0, g = src[p + 1] - g0, b = src[p + 2] - b0;
+    if (r * r + g * g + b * b <= lim) { seen[i] = 1; stack[sp++] = i; }
+  };
+  push(y * w + x);
+  while (sp) {
+    const i = stack[--sp], px = i % w;
+    mask[i] = value; count++;
+    if (px > 0) push(i - 1);
+    if (px < w - 1) push(i + 1);
+    if (i >= w) push(i - w);
+    if (i < n - w) push(i + w);
+  }
+  return count;
+}
+
+/** Sets `mask` to `value` along a brush stroke from (x0, y0) to (x1, y1) of radius `r`. */
+export function paintMask(mask, w, h, x0, y0, x1, y1, r, value) {
+  const ax = Math.max(0, Math.floor(Math.min(x0, x1) - r)), bx = Math.min(w - 1, Math.ceil(Math.max(x0, x1) + r));
+  const ay = Math.max(0, Math.floor(Math.min(y0, y1) - r)), by = Math.min(h - 1, Math.ceil(Math.max(y0, y1) + r));
+  const dx = x1 - x0, dy = y1 - y0, len = dx * dx + dy * dy;
+  for (let y = ay; y <= by; y++) {
+    for (let x = ax; x <= bx; x++) {
+      const px = x + .5 - x0, py = y + .5 - y0;
+      const t = len ? clamp01((px * dx + py * dy) / len) : 0;
+      const ex = px - t * dx, ey = py - t * dy;
+      if (ex * ex + ey * ey <= r * r) mask[y * w + x] = value;
+    }
+  }
 }
 
 /** The tight box of what is visible inside `box`, or null if nothing is. */

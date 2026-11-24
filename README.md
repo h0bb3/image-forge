@@ -11,10 +11,12 @@ them as separate pictures with no background. Image Forge does the cutting:
 1. Drop, paste (Ctrl+V) or open a picture. The background is removed and the
    separate parts are found and boxed.
 2. Say which part is which: with a part selected, press **F**ront, **B**ack,
-   **L**eft, **R**ight, **T**op or **D** for bottom (or click the view). The
-   next part without a view is selected for you, so a sheet of four is four
-   key presses.
-3. **Export zip** (Ctrl+S): `name_front.png`, `name_back.png` and so on.
+   **L**eft, **R**ight, **T**op or **D** for bottom, or click the view in
+   the bar that sits below the selected part. The next part without a view
+   is selected for you, so a sheet of four is four clicks or key presses.
+3. **Export images** (Ctrl+S) downloads `name_front.png`, `name_back.png`
+   and so on, one by one; **Zip** (Ctrl+Shift+S) puts them in one file. The
+   first time, the browser asks whether the page may download several files.
 
 Nothing is uploaded; the picture never leaves the page.
 
@@ -29,6 +31,12 @@ Nothing is uploaded; the picture never leaves the page.
   still left of one. Only background reached from the border is removed, so a white
   eye survives in a white sheet; *Also inside the parts* removes enclosed
   gaps as well. A picture that is already cut out is left as it is.
+- **By hand.** The tools at the top left of the picture. *Erase area* (W):
+  click an area that should have gone, such as the gap between two legs,
+  and all of it that is one colour becomes transparent; click again where a
+  shadow is left. *Eraser* (E) and *Restore* (Q) are brushes that paint
+  transparency or the original picture; `[` and `]` change their size.
+  Ctrl+Z undoes, V goes back to selecting.
 - **Parts.** Drag in the picture to mark a part by hand, drag a box or its
   handles to adjust it, Delete removes it, Tab goes to the next. *Join
   pieces closer than* decides when loose pieces count as one part.

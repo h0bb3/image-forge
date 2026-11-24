@@ -1,6 +1,7 @@
 // Image Forge: the page. The image work itself is in core.js.
 import {
   LABELS, alphaShare, borderColor, removeBackground, contentBounds, detectParts, layoutViews, zip,
+  floodMask, paintMask,
 } from './core.js';
 
 const $ = id => document.getElementById(id);
@@ -12,6 +13,7 @@ const NEUTRAL = '#868e96';
 const defaults = {
   tolerance: 18, soft: 14, defringe: true, choke: 0, holes: false, gap: 1.2,
   trim: true, padding: 6, square: true, same: true, size: 0, fill: 'transparent', fillColor: '#ffffff',
+  brush: 30,
 };
 const opt = { ...defaults };
 try { Object.assign(opt, JSON.parse(localStorage.getItem('image-forge') || '{}')); } catch { /* defaults */ }
@@ -23,6 +25,8 @@ const sheets = [];
 let current = null;      // the sheet shown
 let selected = null;     // the selected box (of the current sheet)
 let picking = false;     // the next click takes the background colour
+let tool = 'select';     // select | wand (erase an area) | erase | restore (brushes)
+let hover = null;        // where the pointer is over the picture, for the brush
 let showOriginal = false;
 let nextId = 1;
 let nameTyped = false;
@@ -65,6 +69,7 @@ async function addImage(blob, name) {
     on: alphaShare(src) < 0.02,   // a picture that is already cut out is left alone
     auto: true, color: borderColor(src, w, h),
     boxes: [], found: true,       // found: the boxes are as detected, nobody has touched them
+    mask: null, undo: [],         // the work by hand: 1 erased, 2 kept (see core.js)
     view: null,
   };
   sheets.push(sheet);
@@ -95,8 +100,12 @@ function process(sheet, redetect = sheet.found) {
   sheet.out = sheet.on
     ? removeBackground(sheet.src, sheet.w, sheet.h, {
       color: sheet.color, tolerance: opt.tolerance, soft: opt.soft, holes: opt.holes, defringe: opt.defringe, choke: opt.choke,
+      mask: sheet.mask,
     })
-    : sheet.src;
+    : sheet.mask
+      // No background to key out: only the work by hand counts.
+      ? removeBackground(sheet.src, sheet.w, sheet.h, { color: [0, 0, 0], tolerance: -1, mask: sheet.mask })
+      : sheet.src;
   sheet.canvas.getContext('2d').putImageData(new ImageData(sheet.out, sheet.w, sheet.h), 0, 0);
   if (redetect) detect(sheet);
 }
@@ -107,6 +116,60 @@ function detect(sheet) {
     .map(b => ({ id: nextId++, ...b, label: null }));
   sheet.found = true;
   if (sheet === current) selected = sheet.boxes[was] || sheet.boxes[0] || null;
+}
+
+// ------------------------------------------------------------ work by hand
+function remember() {
+  current.undo.push(current.mask ? current.mask.slice() : null);
+  if (current.undo.length > 30) current.undo.shift();
+  if (!current.mask) current.mask = new Uint8Array(current.w * current.h);
+}
+
+function undo() {
+  if (!current?.undo.length) { toast('Nothing to undo'); return; }
+  current.mask = current.undo.pop();
+  process(current);
+  refresh();
+}
+
+/** Erases the one-coloured area around a point of the picture. */
+function eraseArea(q) {
+  const x = Math.floor(q.x), y = Math.floor(q.y);
+  if (x < 0 || y < 0 || x >= current.w || y >= current.h) return;
+  remember();
+  floodMask(current.src, current.w, current.h, x, y, Math.max(6, opt.tolerance + opt.soft), current.mask, 1);
+  process(current);
+  refresh();
+}
+
+/** A piece of a brush stroke: into the mask, and at once onto the picture shown. */
+function stroke(from, to) {
+  const r = opt.brush / 2, g = current.canvas.getContext('2d');
+  paintMask(current.mask, current.w, current.h, from.x, from.y, to.x, to.y, r, tool === 'erase' ? 1 : 2);
+  g.save();
+  g.lineWidth = 2 * r; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(from.x, from.y); g.lineTo(to.x + .01, to.y);
+  if (tool === 'erase') {
+    g.globalCompositeOperation = 'destination-out';
+    g.stroke();
+  } else {
+    const steps = Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / Math.max(1, r / 2));
+    g.beginPath();
+    for (let i = 0; i <= steps; i++) {
+      const k = steps ? i / steps : 0, x = from.x + (to.x - from.x) * k, y = from.y + (to.y - from.y) * k;
+      g.moveTo(x + r, y); g.arc(x, y, r, 0, Math.PI * 2);
+    }
+    g.clip();
+    g.globalCompositeOperation = 'copy';
+    g.drawImage(current.srcCanvas, 0, 0);
+  }
+  g.restore();
+}
+
+function setTool(next) {
+  tool = next;
+  picking = false;
+  refresh();
 }
 
 const reprocessAll = debounce(() => { for (const s of sheets) process(s); refresh(); }, 50);
@@ -178,6 +241,18 @@ function download(blob, name) {
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
 
+/** Every labelled view as its own PNG, downloaded one after the other. */
+async function exportImages() {
+  const items = collect();
+  if (!items.length) { toast('Nothing to export yet: give a part a view first'); return; }
+  const canvases = render(items);
+  for (let i = 0; i < items.length; i++) {
+    download(await toPng(canvases[i]), fileName(items[i].label));
+    await new Promise(done => setTimeout(done, 250));   // browsers drop downloads that come all at once
+  }
+  toast(`Exported ${items.length} picture${items.length > 1 ? 's' : ''}`);
+}
+
 async function exportZip() {
   const items = collect();
   if (!items.length) { toast('Nothing to export yet: give a part a view first'); return; }
@@ -225,6 +300,33 @@ for (const label of LABELS) {
   tiles[label] = el;
 }
 
+// The same choice by the mouse, right at the selected part.
+const tagbar = $('tagbar');
+for (const label of LABELS) {
+  const b = document.createElement('button');
+  b.type = 'button'; b.textContent = label; b.dataset.label = label;
+  b.style.setProperty('--c', COLORS[label]);
+  b.addEventListener('click', () => { if (selected) assign(selected, label); view.focus(); });
+  tagbar.append(b);
+}
+{
+  const b = document.createElement('button');
+  b.type = 'button'; b.textContent = '×'; b.title = 'Remove this part (Delete)'; b.className = 'x';
+  b.addEventListener('click', () => { if (selected) removeBox(selected); view.focus(); });
+  tagbar.append(b);
+}
+
+function placeTagbar(r) {
+  if (!current || !selected || tool !== 'select' || picking || drag) { tagbar.style.display = 'none'; return; }
+  tagbar.style.display = 'flex';
+  for (const b of tagbar.children) b.classList.toggle('on', !!b.dataset.label && b.dataset.label === selected.label);
+  const s = toScreen(selected, current.view), bw = tagbar.offsetWidth, bh = tagbar.offsetHeight;
+  const x = clamp(s.x + s.w / 2 - bw / 2, 4, Math.max(4, r.width - bw - 4));
+  let y = s.y + s.h + 8;
+  if (y + bh > r.height - 4) y = Math.max(4, Math.min(s.y + s.h, r.height) - bh - 8);
+  tagbar.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+}
+
 const refreshTiles = debounce(() => {
   const items = collect(), thumbs = render(items, 220);
   for (const label of LABELS) {
@@ -268,6 +370,7 @@ function paint() {
   if (view.width !== W || view.height !== H) { view.width = W; view.height = H; }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, r.width, r.height);
+  placeTagbar(r);
   if (!current) return;
   const v = current.view, css = getComputedStyle(document.documentElement);
   if (!checker) {
@@ -305,6 +408,12 @@ function paint() {
       }
     }
   }
+  if ((tool === 'erase' || tool === 'restore') && hover) {
+    for (const [color, width] of [['#000', 3], ['#fff', 1.5]]) {
+      ctx.strokeStyle = color; ctx.lineWidth = width;
+      ctx.beginPath(); ctx.arc(hover.x, hover.y, Math.max(2, opt.brush / 2 * v.z), 0, Math.PI * 2); ctx.stroke();
+    }
+  }
 }
 
 function refresh() {
@@ -329,7 +438,17 @@ function refresh() {
   $('info').textContent = current
     ? `${current.w} × ${current.h} px · ${current.boxes.length} part${current.boxes.length === 1 ? '' : 's'} · ${Math.round(current.view.z * 100)} %`
     : '';
-  view.style.cursor = picking ? 'crosshair' : '';
+  view.style.cursor = picking || tool === 'wand' ? 'crosshair' : tool !== 'select' ? 'none' : '';
+  $('tools').style.display = current ? 'flex' : 'none';
+  for (const b of document.querySelectorAll('[data-tool]')) b.classList.toggle('on', b.dataset.tool === tool);
+  $('brushSize').style.display = tool === 'erase' || tool === 'restore' ? '' : 'none';
+  $('undo').disabled = !current?.undo.length;
+  $('hint').textContent = {
+    select: 'Drag: mark a part · Wheel: zoom · Space or middle button: pan · 0: fit',
+    wand: 'Click an area to make it transparent (as far as Tolerance and Soft edge reach) · Ctrl+Z: undo',
+    erase: 'Paint what is to be transparent · [ ]: size · Ctrl+Z: undo',
+    restore: 'Paint what is to come back · [ ]: size · Ctrl+Z: undo',
+  }[tool];
   draw();
   refreshTiles();
 }
@@ -376,6 +495,14 @@ view.addEventListener('pointerdown', e => {
     picking = false;
     refresh();
     return;
+  } else if (tool === 'wand') {
+    eraseArea(toImage(p));
+    return;
+  } else if (tool !== 'select') {
+    const q = toImage(p);
+    remember();
+    drag = { kind: 'brush', last: q };
+    stroke(q, q);
   } else {
     const h = hit(p);
     if (h) {
@@ -393,8 +520,10 @@ view.addEventListener('pointerdown', e => {
 view.addEventListener('pointermove', e => {
   if (!current) return;
   const p = local(e), v = current.view;
+  hover = p;
+  if (tool === 'erase' || tool === 'restore') draw();
   if (!drag) {
-    if (picking) return;
+    if (picking || tool !== 'select') return;
     const h = hit(p);
     view.style.cursor = spaceDown ? 'grab' : h?.handle ? CURSORS[h.handle.join(',')] + '-resize' : h ? 'move' : 'crosshair';
     return;
@@ -402,6 +531,13 @@ view.addEventListener('pointermove', e => {
   const dx = (p.x - drag.p.x) / v.z, dy = (p.y - drag.p.y) / v.z;
   if (drag.kind === 'pan') {
     v.x = drag.x + p.x - drag.p.x; v.y = drag.y + p.y - drag.p.y;
+    draw();
+    return;
+  }
+  if (drag.kind === 'brush') {
+    const q = toImage(p);
+    stroke(drag.last, q);
+    drag.last = q;
     draw();
     return;
   }
@@ -440,6 +576,7 @@ view.addEventListener('pointermove', e => {
 
 function endDrag() {
   if (!drag) return;
+  if (drag.kind === 'brush') process(current);
   if (drag.kind === 'new' && !drag.box) selected = null;   // a click on nothing
   if (drag.kind === 'new' && drag.box && (drag.box.w < 3 || drag.box.h < 3)) removeBox(drag.box);
   drag = null;
@@ -447,6 +584,7 @@ function endDrag() {
 }
 view.addEventListener('pointerup', endDrag);
 view.addEventListener('pointercancel', endDrag);
+view.addEventListener('pointerleave', () => { hover = null; draw(); });
 view.addEventListener('contextmenu', e => e.preventDefault());
 
 view.addEventListener('wheel', e => {
@@ -464,13 +602,24 @@ const typing = e => /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName) && e.targ
 window.addEventListener('keydown', e => {
   if (typing(e)) return;
   const k = e.key.toLowerCase();
-  if ((e.ctrlKey || e.metaKey) && (k === 's' || k === 'e')) { e.preventDefault(); exportZip(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === 's') { e.preventDefault(); if (e.shiftKey) exportZip(); else exportImages(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); undo(); return; }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (k === ' ') { spaceDown = true; if (e.target === view || e.target === document.body) e.preventDefault(); return; }
   if (!current) return;
   if (k === 'o') { if (!showOriginal) { showOriginal = true; draw(); } return; }
   if (k === '0') { fit(); refresh(); return; }
-  if (k === 'escape') { picking = false; selected = null; refresh(); return; }
+  if (k === 'escape') { picking = false; if (tool !== 'select') tool = 'select'; else selected = null; refresh(); return; }
+  const picked = { v: 'select', w: 'wand', e: 'erase', q: 'restore' }[k];
+  if (picked) { setTool(picked); return; }
+  if (k === '[' || k === ']') {
+    opt.brush = clamp(Math.round(opt.brush * (k === ']' ? 1.25 : 0.8)), 2, 300);
+    save();
+    document.querySelector('[data-opt=brush]').value = opt.brush;
+    draw();
+    return;
+  }
+  if (tool !== 'select') return;
   if (k === 'tab' && e.target === view) {
     e.preventDefault();
     const n = current.boxes.length;
@@ -533,7 +682,10 @@ $('original').addEventListener('change', e => { showOriginal = e.target.checked;
 $('detect').addEventListener('click', () => { if (current) { detect(current); refresh(); } });
 $('remove').addEventListener('click', () => { if (selected) removeBox(selected); });
 $('name').addEventListener('input', () => { nameTyped = true; });
-$('export').addEventListener('click', exportZip);
+$('export').addEventListener('click', exportImages);
+$('exportZip').addEventListener('click', exportZip);
+$('undo').addEventListener('click', undo);
+for (const b of document.querySelectorAll('[data-tool]')) b.addEventListener('click', () => { setTool(b.dataset.tool); view.focus(); });
 $('open').addEventListener('click', () => $('file').click());
 $('open2').addEventListener('click', () => $('file').click());
 $('file').addEventListener('change', async e => { await addFiles([...e.target.files]); e.target.value = ''; });

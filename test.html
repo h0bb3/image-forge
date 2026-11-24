@@ -3,7 +3,7 @@
 <title>Image Forge tests</title>
 <pre id="log">running</pre>
 <script type="module">
-import { alphaShare, borderColor, removeBackground, contentBounds, readingOrder, detectParts, layoutViews, crc32, zip } from './core.js';
+import { floodMask, paintMask, alphaShare, borderColor, removeBackground, contentBounds, readingOrder, detectParts, layoutViews, crc32, zip } from './core.js';
 
 const lines = [];
 let failed = 0;
@@ -70,6 +70,23 @@ test('cleaning the edges makes a half-background pixel half transparent', () => 
   const lined = picture(12, 5, WHITE, [[4, 0, 8, 5, RED], [4, 0, 1, 5, BLUE]]);
   const kept = removeBackground(lined, 12, 5, { color: WHITE, tolerance: 10, defringe: true });
   eq([...kept.slice(p, p + 4)], [...BLUE, 255]);
+});
+
+test('work by hand: an erased gap goes, a kept patch of background stays', () => {
+  // A red frame around a white gap (as between two legs), and bare background at the left.
+  const src = picture(30, 20, WHITE, [[10, 4, 14, 12, RED], [14, 8, 6, 4, WHITE]]);
+  const mask = new Uint8Array(30 * 20);
+  eq(floodMask(src, 30, 20, 16, 9, 10, mask, 1), 24);
+  paintMask(mask, 30, 20, 2.5, 2.5, 2.5, 2.5, 1.2, 2);
+  const out = removeBackground(src, 30, 20, { color: WHITE, tolerance: 10, mask });
+  eq([alpha(out, 30, 16, 9), alpha(out, 30, 19, 11), alpha(out, 30, 12, 6), alpha(out, 30, 2, 2), alpha(out, 30, 6, 2)], [0, 0, 255, 255, 0]);
+});
+
+test('a brush stroke covers its line and its round ends, no more', () => {
+  const mask = new Uint8Array(20 * 10);
+  paintMask(mask, 20, 10, 4, 5, 14, 5, 2, 1);
+  const at = (x, y) => mask[y * 20 + x];
+  eq([at(4, 5), at(9, 3), at(9, 6), at(15, 5), at(2, 4), at(9, 2), at(9, 7), at(16, 5), at(1, 5)], [1, 1, 1, 1, 1, 0, 0, 0, 0]);
 });
 
 test('shrinking the edge takes one pixel all round', () => {
