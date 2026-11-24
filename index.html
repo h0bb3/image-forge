@@ -27,8 +27,9 @@
     <canvas id="view" tabindex="0" aria-label="The picture and its marked parts"></canvas>
     <div id="three">
       <div class="bar">
-        <button type="button" data-box3d="0" title="Front and back share one plane through the middle, left and right another: a cross of pictures, as trees are often done">Crossed</button>
-        <button type="button" data-box3d="1" title="Each picture on its own side of the box around the thing">Box</button>
+        <span class="what">Style</span>
+        <button type="button" data-box3d="0" title="Centered: front and back share one plane through the middle, left and right another, so the pictures cross in the centre, as billboard trees are done">Centered</button>
+        <button type="button" data-box3d="1" title="Cube: each picture on its own side of the box around the thing">Cube</button>
         <label class="check" title="Tick this if the sheet names the sides by the thing's own left and right, not by where it is seen from"><input type="checkbox" id="swap3d"> Swap left and right</label>
         <span class="grow"></span>
         <button type="button" id="saveGlb" title="Save these quads with their pictures as one .glb file, for Blender or a game engine: unlit, 1 unit high, standing on the ground, facing +z">Save .glb</button>

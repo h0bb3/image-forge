@@ -48,7 +48,7 @@ Nothing is uploaded; the picture never leaves the page.
   settings. Open or drop that file later to go on where you were. (It is a
   zip of `project.json`, the pictures and the masks.)
 - **3D.** The *3D* button stands the views up as flat pictures in space:
-  crossed through the middle, or on the sides of a box. Drag to turn it.
+  *Centered* (crossing in the middle) or *Cube* (on the sides of a box). Drag to turn it.
   *Save .glb* writes them as one glTF file (unlit, 1 unit high, on the
   ground, facing +z) for Blender or a game engine. It is a stand-in made of
   six pictures at most, not a model.
