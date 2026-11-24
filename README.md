@@ -31,6 +31,11 @@ Nothing is uploaded; the picture never leaves the page.
   still left of one. Only background reached from the border is removed, so a white
   eye survives in a white sheet; *Also inside the parts* removes enclosed
   gaps as well. A picture that is already cut out is left as it is.
+- **A view from another view.** *from…* on a view takes it from another
+  one instead of from a part of its own: one click makes left the mirrored
+  right (or back the mirrored front, and so on), and the panel that opens
+  lets you choose the source, mirroring and a turn of 90° or 180°. The
+  choice is remembered for the next sheet.
 - **By hand.** The tools at the top left of the picture. *Erase area* (W):
   click an area that should have gone, such as the gap between two legs,
   and all of it that is one colour becomes transparent; click again where a

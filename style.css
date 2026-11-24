@@ -136,8 +136,21 @@ input[type=color] { width: 34px; height: 28px; padding: 0; border: 1px solid var
   background: var(--c); color: #fff; border-bottom-right-radius: 6px;
 }
 .tile kbd { position: absolute; right: 5px; top: 3px; font: 11px ui-monospace, monospace; color: var(--dim); }
-.tile .acts { position: absolute; right: 3px; bottom: 3px; display: none; gap: 3px; }
-.tile.full .acts { display: flex; }
+.tile .acts { position: absolute; right: 3px; bottom: 3px; display: flex; gap: 3px; }
+.tile:not(.full) .acts [data-act=save], .tile:not(.full) .acts [data-act=clear] { display: none; }
+.tile .acts [data-act=from] { opacity: .75; }
+.tile .src {
+  position: absolute; left: 0; right: 0; bottom: 24px; text-align: center; font-size: 10px; line-height: 14px;
+  background: var(--panel); color: var(--text); opacity: .9;
+}
+.tile .src:empty { display: none; }
+#derive {
+  display: none; flex-direction: column; padding: 8px 10px 0; margin-bottom: 8px;
+  border: 1px solid var(--accent); border-radius: 8px;
+}
+#derive b { text-transform: capitalize; }
+#derive .check { margin-bottom: 0; }
+#derive select { padding: 3px 6px; }
 .tile .acts span {
   background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-size: 11px; line-height: 18px;
 }

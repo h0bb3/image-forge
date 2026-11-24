@@ -48,7 +48,21 @@
     <section>
       <h2>Views</h2>
       <div id="tiles"></div>
-      <p class="note">Select a part in the picture, then choose its view: in the bar below the part, here, or by its key. The next unlabelled part is selected for you.</p>
+      <div id="derive">
+        <div class="row"><b id="deriveName"></b> is taken from <select id="deriveFrom"></select></div>
+        <div class="row">
+          <label class="check"><input type="checkbox" id="deriveMirror"> mirrored</label>
+          <select id="deriveTurn" title="Turn the picture">
+            <option value="0">not turned</option>
+            <option value="90">turned 90° right</option>
+            <option value="180">turned 180°</option>
+            <option value="270">turned 90° left</option>
+          </select>
+        </div>
+        <p class="note" id="deriveNote"></p>
+        <div class="row"><button type="button" id="deriveDone">Done</button><button type="button" id="deriveOff">Stop taking it from there</button></div>
+      </div>
+      <p class="note">Select a part in the picture, then choose its view: in the bar below the part, here, or by its key. The next unlabelled part is selected for you. <b>from…</b> on a view takes it from another view instead, mirrored or turned.</p>
     </section>
 
     <section>

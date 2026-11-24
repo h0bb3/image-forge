@@ -8,12 +8,15 @@ const $ = id => document.getElementById(id);
 const KEYS = { f: 'front', b: 'back', l: 'left', r: 'right', t: 'top', d: 'bottom' };
 const COLORS = { front: '#d9480f', back: '#1971c2', left: '#2f9e44', right: '#9c36b5', top: '#b08900', bottom: '#0c8599' };
 const NEUTRAL = '#868e96';
+const OPPOSITE = { front: 'back', back: 'front', left: 'right', right: 'left', top: 'bottom', bottom: 'top' };
 
 // ---------------------------------------------------------------- settings
 const defaults = {
   tolerance: 18, soft: 14, defringe: true, choke: 0, holes: false, gap: 1.2,
   trim: true, padding: 6, square: true, same: true, size: 0, fill: 'transparent', fillColor: '#ffffff',
   brush: 30,
+  // Views taken from another view: {left: {from: 'right', mirror: true, turn: 0}}.
+  derived: {},
 };
 const opt = { ...defaults };
 try { Object.assign(opt, JSON.parse(localStorage.getItem('image-forge') || '{}')); } catch { /* defaults */ }
@@ -30,6 +33,7 @@ let hover = null;        // where the pointer is over the picture, for the brush
 let showOriginal = false;
 let nextId = 1;
 let nameTyped = false;
+let deriving = null;     // the view whose source is being chosen
 
 const view = $('view'), ctx = view.getContext('2d');
 const stage = $('stage');
@@ -180,6 +184,7 @@ function assign(box, label) {
   else {
     for (const { box: other } of allBoxes()) if (other.label === label) other.label = null;
     box.label = label;
+    if (opt.derived[label]) { delete opt.derived[label]; save(); if (deriving === label) deriving = null; }
     // On to the next part that has no label yet.
     const i = current.boxes.indexOf(box);
     const order = [...current.boxes.slice(i + 1), ...current.boxes.slice(0, i)];
@@ -198,22 +203,35 @@ function removeBox(box) {
 }
 
 // ------------------------------------------------------------------- export
-/** The labelled parts, in the order of the views, with what to cut out. */
+/**
+ * The views to export, in their order, with what to cut out: the labelled
+ * parts, and the views that are taken from one of those, mirrored or turned.
+ */
 function collect() {
+  const direct = {};
+  for (const { sheet, box } of allBoxes()) {
+    if (!box.label) continue;
+    const r = (opt.trim && contentBounds(sheet.out, sheet.w, sheet.h, box)) || { x: box.x, y: box.y, w: box.w, h: box.h };
+    direct[box.label] = { label: box.label, sheet, box, r, mirror: false, turn: 0, size: { w: r.w, h: r.h } };
+  }
   const items = [];
   for (const label of LABELS) {
-    const hit = allBoxes().find(e => e.box.label === label);
-    if (!hit) continue;
-    const { sheet, box } = hit;
-    const r = (opt.trim && contentBounds(sheet.out, sheet.w, sheet.h, box)) || { x: box.x, y: box.y, w: box.w, h: box.h };
-    items.push({ label, sheet, box, r });
+    const d = opt.derived[label];
+    if (direct[label]) items.push(direct[label]);
+    else if (d && direct[d.from]) {
+      const from = direct[d.from], side = d.turn % 180 !== 0;
+      items.push({
+        ...from, label, derived: true, mirror: !!d.mirror, turn: d.turn || 0,
+        size: side ? { w: from.r.h, h: from.r.w } : from.size,
+      });
+    }
   }
   return items;
 }
 
 /** The pictures of `items` as canvases; `limit` caps the longer side (thumbnails). */
 function render(items, limit = 0) {
-  const lay = layoutViews(items.map(i => i.r), opt);
+  const lay = layoutViews(items.map(i => i.size), opt);
   return items.map((it, i) => {
     const L = lay[i];
     const k = limit ? Math.min(1, limit / Math.max(L.W, L.H)) : 1;
@@ -225,7 +243,12 @@ function render(items, limit = 0) {
       g.fillRect(0, 0, c.width, c.height);
     }
     g.imageSmoothingQuality = 'high';
-    g.drawImage(it.sheet.canvas, it.r.x, it.r.y, it.r.w, it.r.h, L.x * k, L.y * k, L.w * k, L.h * k);
+    // The cut-out about the middle of its place: mirrored first, then turned.
+    const side = it.turn % 180 !== 0, dw = (side ? L.h : L.w) * k, dh = (side ? L.w : L.h) * k;
+    g.translate((L.x + L.w / 2) * k, (L.y + L.h / 2) * k);
+    g.rotate(it.turn * Math.PI / 180);
+    if (it.mirror) g.scale(-1, 1);
+    g.drawImage(it.sheet.canvas, it.r.x, it.r.y, it.r.w, it.r.h, -dw / 2, -dh / 2, dw, dh);
     return c;
   });
 }
@@ -283,16 +306,31 @@ for (const label of LABELS) {
   el.setAttribute('role', 'button');
   el.style.setProperty('--c', COLORS[label]);
   el.innerHTML = `<span class="name">${label}</span><kbd>${key}</kbd>
-    <span class="acts"><span data-act="save" title="Download this view">save</span><span data-act="clear" title="Take the view from its part">×</span></span>`;
+    <span class="src"></span>
+    <span class="acts"><span data-act="from" title="Take this view from another view, mirrored or turned">from…</span><span data-act="save" title="Download this view">save</span><span data-act="clear" title="Empty this view">×</span></span>`;
   el.title = `${label[0].toUpperCase()}${label.slice(1)} (${key})`;
   const act = e => {
     const hit = allBoxes().find(x => x.box.label === label);
     const what = e.target.dataset?.act;
     if (what === 'save') exportOne(label);
-    else if (what === 'clear') { if (hit) { hit.box.label = null; refresh(); } }
-    else if (selected && selected.label !== label) assign(selected, label);
+    else if (what === 'clear') {
+      if (hit) hit.box.label = null;
+      delete opt.derived[label]; save();
+      if (deriving === label) deriving = null;
+      refresh();
+    } else if (what === 'from') {
+      // One click gives the usual case: the opposite view, mirrored.
+      if (!opt.derived[label]) {
+        if (hit) hit.box.label = null;
+        opt.derived[label] = { from: OPPOSITE[label], mirror: true, turn: 0 };
+        save();
+      }
+      deriving = label;
+      refresh();
+    } else if (selected && selected.label !== label) assign(selected, label);
     else if (hit) { if (hit.sheet !== current) show(hit.sheet); selected = hit.box; refresh(); }
-    else toast('Select a part in the picture first');
+    else if (opt.derived[label]) { deriving = label; refresh(); }
+    else toast('Select a part in the picture first, or use "from…" to take this view from another');
   };
   el.addEventListener('click', act);
   el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(e); } });
@@ -334,10 +372,23 @@ const refreshTiles = debounce(() => {
     el.querySelector('canvas')?.remove();
     el.classList.toggle('full', i >= 0);
     el.classList.toggle('empty', i < 0);
-    el.classList.toggle('on', i >= 0 && items[i].box === selected);
+    el.classList.toggle('on', i >= 0 && !items[i].derived && items[i].box === selected);
     if (i >= 0) el.prepend(thumbs[i]);
+    const d = opt.derived[label];
+    el.querySelector('.src').textContent = d ? `= ${d.from}${d.mirror ? ', mirrored' : ''}${d.turn ? ', turned' : ''}` : '';
   }
-  const lay = layoutViews(items.map(i => i.r), opt);
+  // The choice of where a view is taken from.
+  const d = deriving && opt.derived[deriving];
+  $('derive').style.display = d ? 'flex' : 'none';
+  if (d) {
+    $('deriveName').textContent = deriving;
+    $('deriveFrom').replaceChildren(...LABELS.filter(l => l !== deriving).map(l => new Option(l, l)));
+    $('deriveFrom').value = d.from;
+    $('deriveMirror').checked = !!d.mirror;
+    $('deriveTurn').value = String(d.turn || 0);
+    $('deriveNote').textContent = allBoxes().some(e => e.box.label === d.from) ? '' : `Nothing to show yet: no part is the ${d.from} view.`;
+  }
+  const lay = layoutViews(items.map(i => i.size), opt);
   const sizes = [...new Set(lay.map(l => `${l.W} × ${l.H}`))];
   $('sizes').textContent = !items.length ? '' : sizes.length === 1
     ? `${items.length} picture${items.length > 1 ? 's' : ''} of ${sizes[0]} px`
@@ -682,6 +733,16 @@ $('original').addEventListener('change', e => { showOriginal = e.target.checked;
 $('detect').addEventListener('click', () => { if (current) { detect(current); refresh(); } });
 $('remove').addEventListener('click', () => { if (selected) removeBox(selected); });
 $('name').addEventListener('input', () => { nameTyped = true; });
+for (const id of ['deriveFrom', 'deriveMirror', 'deriveTurn']) {
+  $(id).addEventListener('change', () => {
+    if (!deriving) return;
+    opt.derived[deriving] = { from: $('deriveFrom').value, mirror: $('deriveMirror').checked, turn: Number($('deriveTurn').value) };
+    save();
+    refresh();
+  });
+}
+$('deriveOff').addEventListener('click', () => { delete opt.derived[deriving]; deriving = null; save(); refresh(); });
+$('deriveDone').addEventListener('click', () => { deriving = null; refresh(); });
 $('export').addEventListener('click', exportImages);
 $('exportZip').addEventListener('click', exportZip);
 $('undo').addEventListener('click', undo);
