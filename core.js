@@ -2,6 +2,7 @@
 // Pixels are RGBA bytes, row by row, as in ImageData.
 
 export const LABELS = ['front', 'back', 'left', 'right', 'top', 'bottom'];
+const clamp01 = v => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 /** The share of pixels that are not opaque. */
 export function alphaShare(d) {
@@ -33,9 +34,11 @@ export function borderColor(d, w, h) {
  * within `tolerance` (0-255) of `color`; over the next `soft` it fades, and
  * the background's share of its colour is taken out. Unless `holes`, only
  * what is reached from the border goes: a white eye stays in a white sheet.
+ * `defringe` gives the smoothed pixels of an edge, which are part thing and
+ * part background, their share as alpha and the colour of the thing.
  * `choke` shrinks what is left by that many pixels.
  */
-export function removeBackground(src, w, h, { color, tolerance, soft = 0, holes = false, choke = 0 }) {
+export function removeBackground(src, w, h, { color, tolerance, soft = 0, holes = false, defringe = false, choke = 0 }) {
   const out = new Uint8ClampedArray(src);
   const n = w * h, [br, bg, bb] = color, lim = tolerance + soft;
   const dist = i => {
@@ -70,6 +73,43 @@ export function removeBackground(src, w, h, { color, tolerance, soft = 0, holes 
     out[p + 1] = bg + (src[p + 1] - bg) / a;
     out[p + 2] = bb + (src[p + 2] - bb) / a;
     out[p + 3] = src[p + 3] * a;
+  }
+  if (defringe) {
+    // The two rings of kept pixels along the background. One of them is a
+    // mix when it lies on the line from the background colour to the colour
+    // of a pixel further in; how far along that line is its alpha.
+    const ring = new Uint8Array(n), list = [];
+    for (let depth = 1; depth <= 2; depth++) {
+      const from = list.length;
+      for (let y = 0, i = 0; y < h; y++) {
+        for (let x = 0; x < w; x++, i++) {
+          if (mark[i] || ring[i]) continue;
+          const at = j => (depth === 1 ? mark[j] : ring[j] === 1);
+          if ((x > 0 && at(i - 1)) || (x < w - 1 && at(i + 1)) || (y > 0 && at(i - w)) || (y < h - 1 && at(i + w))) list.push(i);
+        }
+      }
+      for (let k = from; k < list.length; k++) ring[list[k]] = depth;
+    }
+    for (const i of list) {
+      const p = i * 4, x = i % w, y = (i - x) / w;
+      const pr = src[p] - br, pg = src[p + 1] - bg, pb = src[p + 2] - bb;
+      let best = 300, alpha = 1, from = -1;
+      for (let yy = Math.max(0, y - 3); yy <= Math.min(h - 1, y + 3); yy++) {
+        for (let xx = Math.max(0, x - 3); xx <= Math.min(w - 1, x + 3); xx++) {
+          const j = yy * w + xx;
+          if (mark[j] || ring[j]) continue;
+          const q = j * 4, fr = src[q] - br, fg = src[q + 1] - bg, fb = src[q + 2] - bb;
+          const ff = fr * fr + fg * fg + fb * fb;
+          if (ff < 300) continue;
+          const a = clamp01((pr * fr + pg * fg + pb * fb) / ff);
+          const res = (pr - a * fr) ** 2 + (pg - a * fg) ** 2 + (pb - a * fb) ** 2;
+          if (res < best) { best = res; alpha = a; from = q; }
+        }
+      }
+      if (from < 0 || alpha > 0.97) continue;
+      out[p] = src[from]; out[p + 1] = src[from + 1]; out[p + 2] = src[from + 2];
+      out[p + 3] = src[p + 3] * alpha;
+    }
   }
   for (let k = 0; k < choke; k++) {
     const a = new Uint8Array(n);

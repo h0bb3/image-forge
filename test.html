@@ -53,6 +53,25 @@ test('a soft edge fades and takes the background out of the colour', () => {
   eq(alpha(out, 9, 6, 1), 255);
 });
 
+test('cleaning the edges makes a half-background pixel half transparent', () => {
+  // A smoothed edge: one column is half red, half white, and too far from white to be background.
+  const src = picture(12, 5, WHITE, [[4, 0, 8, 5, RED]]);
+  const mid = RED.map(c => Math.round((c + 255) / 2));
+  for (let y = 0; y < 5; y++) src.set([...mid, 255], (y * 12 + 4) * 4);
+  const plain = removeBackground(src, 12, 5, { color: WHITE, tolerance: 10 });
+  eq([...plain.slice((2 * 12 + 4) * 4, (2 * 12 + 4) * 4 + 4)], [...mid, 255]);
+  const out = removeBackground(src, 12, 5, { color: WHITE, tolerance: 10, defringe: true });
+  const p = (2 * 12 + 4) * 4;
+  eq([...out.slice(p, p + 3)], RED);
+  ok(Math.abs(out[p + 3] - 128) <= 2, 'alpha ' + out[p + 3]);
+  eq([...out.slice(p + 4, p + 8)], [...RED, 255]);
+  // A blue line along the edge is no mix of white and red: it stays.
+  const BLUE = [20, 40, 200];
+  const lined = picture(12, 5, WHITE, [[4, 0, 8, 5, RED], [4, 0, 1, 5, BLUE]]);
+  const kept = removeBackground(lined, 12, 5, { color: WHITE, tolerance: 10, defringe: true });
+  eq([...kept.slice(p, p + 4)], [...BLUE, 255]);
+});
+
 test('shrinking the edge takes one pixel all round', () => {
   const src = picture(20, 20, WHITE, [[5, 5, 10, 10, RED]]);
   const out = removeBackground(src, 20, 20, { color: WHITE, tolerance: 10, choke: 1 });

@@ -23,8 +23,10 @@ Nothing is uploaded; the picture never leaves the page.
 - **Background.** The colour is taken from the border of the picture, or
   picked (the colour field, or *Pick in picture*). *Tolerance* is how far
   from that colour still counts as background, *Soft edge* fades the
-  boundary and takes the background's tint out of it, *Shrink edge* cuts a
-  halo away. Only background reached from the border is removed, so a white
+  boundary and takes the background's tint out of it, *Clean the edges*
+  gives the smoothed pixels of an edge their transparency, so that no halo
+  of the background follows the part, and *Shrink edge* cuts away what is
+  still left of one. Only background reached from the border is removed, so a white
   eye survives in a white sheet; *Also inside the parts* removes enclosed
   gaps as well. A picture that is already cut out is left as it is.
 - **Parts.** Drag in the picture to mark a part by hand, drag a box or its

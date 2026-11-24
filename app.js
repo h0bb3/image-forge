@@ -10,7 +10,7 @@ const NEUTRAL = '#868e96';
 
 // ---------------------------------------------------------------- settings
 const defaults = {
-  tolerance: 18, soft: 14, choke: 0, holes: false, gap: 1.2,
+  tolerance: 18, soft: 14, defringe: true, choke: 0, holes: false, gap: 1.2,
   trim: true, padding: 6, square: true, same: true, size: 0, fill: 'transparent', fillColor: '#ffffff',
 };
 const opt = { ...defaults };
@@ -94,7 +94,7 @@ function show(sheet) {
 function process(sheet, redetect = sheet.found) {
   sheet.out = sheet.on
     ? removeBackground(sheet.src, sheet.w, sheet.h, {
-      color: sheet.color, tolerance: opt.tolerance, soft: opt.soft, holes: opt.holes, choke: opt.choke,
+      color: sheet.color, tolerance: opt.tolerance, soft: opt.soft, holes: opt.holes, defringe: opt.defringe, choke: opt.choke,
     })
     : sheet.src;
   sheet.canvas.getContext('2d').putImageData(new ImageData(sheet.out, sheet.w, sheet.h), 0, 0);
@@ -509,7 +509,7 @@ for (const el of document.querySelectorAll('[data-opt]')) {
     opt[key] = el.type === 'checkbox' ? el.checked : el.type === 'range' || key === 'size' ? Number(el.value) : el.value;
     save();
     showValue();
-    if (['tolerance', 'soft', 'choke', 'holes'].includes(key)) reprocessAll();
+    if (['tolerance', 'soft', 'defringe', 'choke', 'holes'].includes(key)) reprocessAll();
     else if (key === 'gap') { if (current) { detect(current); refresh(); } }
     else refresh();
     $('fillColor').hidden = opt.fill !== 'custom';
